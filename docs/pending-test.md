@@ -1,5 +1,6 @@
 # 待测试
 
+- 新增后端模型管理接口：公开 `/api/models` 返回已启用模型，后台 `/api/admin/models` 支持模型列表、新增、编辑和删除；前端登录页、配置弹窗和知梦后台模型管理页不再因接口缺失提示加载模型列表失败。
 - 知梦 API Key 登录和配置弹窗会通过当前 `IMAGE_API_BASE_URL` 对应站点的 `/v1/models` 检测 Key 是否属于本站点；配置弹窗支持重新保存 API Key，并可手动通过 `/api/usage/token/` 按间隔刷新，以 USD 和绿色进度条显示 1k、2k、4k 各档位余额。
 - 生图请求会按当前图像设置里的 1k、2k、4k 档位选择对应 API Key，不再因为全局缓存的 `apiKey` 回退到 1k。
 - 知梦 API Key 余额会在前端登录态恢复后按 `NEXT_PUBLIC_TOKEN_USAGE_AUTO_REFRESH_INTERVAL_MS` 自动刷新，默认每 10 分钟一次；多个 Key 的余额请求会按 `NEXT_PUBLIC_TOKEN_USAGE_REQUEST_DELAY_MS` 间隔发送，默认间隔 3 秒；刷新页面时如果未超过自动刷新周期，会直接复用本地缓存余额，不会立刻请求额度接口。

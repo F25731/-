@@ -18,6 +18,7 @@
 - `credit_logs`
 - `prompts`
 - `assets`
+- `admin_models`
 - `settings`
 
 后续新增表时再同步补充本文档，未实际使用的规划表不提前写入。
@@ -83,6 +84,21 @@
 | `url`            | string | 图片、视频等媒体地址                    |
 | `created_at`     | string | 创建时间                          |
 | `updated_at`     | string | 更新时间                          |
+
+### admin_models
+
+后台模型配置表。用于保存前端登录和配置弹窗可选择的图片、视频模型。
+
+| 字段           | 类型     | 说明                     |
+|--------------|--------|------------------------|
+| `id`         | string | 主键                     |
+| `name`       | string | 模型名称                   |
+| `type`       | string | 模型类型：`image`、`video` |
+| `api_url`    | string | OpenAI 兼容接口地址         |
+| `enabled`    | bool   | 是否启用                   |
+| `remark`     | string | 备注                     |
+| `created_at` | string | 创建时间                   |
+| `updated_at` | string | 更新时间                   |
 
 ### settings
 

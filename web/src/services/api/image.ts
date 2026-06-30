@@ -214,6 +214,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
         : {
               ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
               ...(contentType ? { "Content-Type": contentType } : {}),
+              ...(config.baseUrl ? { "x-image-api-base-url": config.baseUrl } : {}),
           };
 }
 

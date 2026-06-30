@@ -9,15 +9,9 @@ type RouteContext = {
     params: Promise<{ kind: string }>;
 };
 
-const imageApiBaseUrl = (process.env.IMAGE_API_BASE_URL || "https://api.zmoapi.cn").replace(/\/+$/, "");
-const imageJobTargets: Record<string, string> = {
-    generations: `${imageApiBaseUrl}/v1/images/generations`,
-    edits: `${imageApiBaseUrl}/v1/images/edits`,
-};
-
 export async function POST(request: NextRequest, context: RouteContext) {
     const { kind } = await context.params;
-    const target = imageJobTargets[kind];
+    const target = imageJobTarget(request, kind);
     if (!target) {
         return Response.json({ code: 1, data: null, msg: "Unsupported image job type" }, { status: 404 });
     }
@@ -35,6 +29,13 @@ function forwardHeaders(request: NextRequest) {
     if (authorization) headers.set("authorization", authorization);
     if (contentType) headers.set("content-type", contentType);
     return headers;
+}
+
+function imageJobTarget(request: NextRequest, kind: string) {
+    if (kind !== "generations" && kind !== "edits") return "";
+    const baseUrl = (request.headers.get("x-image-api-base-url") || process.env.IMAGE_API_BASE_URL || "https://api.zmoapi.cn").trim().replace(/\/+$/, "");
+    const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    return `${apiBaseUrl}/images/${kind}`;
 }
 
 async function forwardImageRequest(target: string, body: ArrayBuffer, headers: Headers) {

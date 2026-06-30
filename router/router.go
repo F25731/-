@@ -21,6 +21,7 @@ func New() *gin.Engine {
 	api.GET("/auth/linux-do/callback", gin.WrapF(handler.LinuxDoCallback))
 	api.GET("/auth/me", middleware.OptionalAuth, gin.WrapF(handler.CurrentUser))
 	api.GET("/settings", gin.WrapF(handler.Settings))
+	api.GET("/models", gin.WrapF(handler.Models))
 	v1 := api.Group("/v1", middleware.UserAuth)
 	v1.POST("/images/generations", gin.WrapF(handler.AIImagesGenerations))
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))
@@ -66,6 +67,16 @@ func New() *gin.Engine {
 	admin.POST("/assets", gin.WrapF(handler.AdminSaveAsset))
 	admin.DELETE("/assets/:id", func(c *gin.Context) {
 		handler.AdminDeleteAsset(c.Writer, c.Request, c.Param("id"))
+	})
+	admin.GET("/models", gin.WrapF(handler.AdminModels))
+	admin.POST("/models", func(c *gin.Context) {
+		handler.AdminSaveModel(c.Writer, c.Request, "")
+	})
+	admin.POST("/models/:id", func(c *gin.Context) {
+		handler.AdminSaveModel(c.Writer, c.Request, c.Param("id"))
+	})
+	admin.DELETE("/models/:id", func(c *gin.Context) {
+		handler.AdminDeleteModel(c.Writer, c.Request, c.Param("id"))
 	})
 
 	router.NoRoute(middleware.NotFoundJSON)

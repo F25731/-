@@ -44,6 +44,7 @@ func DB() (*gorm.DB, error) {
 			&model.CreditLog{},
 			&model.Prompt{},
 			&model.Asset{},
+			&model.AdminModel{},
 			&model.Setting{},
 		)
 	})

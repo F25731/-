@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { App, Button, Checkbox, Form, Input, Modal, Select, Space, Typography } from "antd";
 
-import { useConfigStore } from "@/stores/use-config-store";
+import { USER_MODEL_CONFIG_KEY, useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { KeyRound } from "lucide-react";
@@ -13,6 +13,7 @@ export function AppConfigModal() {
     const [form] = Form.useForm();
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const user = useUserStore((state) => state.user);
@@ -38,7 +39,7 @@ export function AppConfigModal() {
 
     const loadCurrentConfig = () => {
         try {
-            const config = JSON.parse(localStorage.getItem("user-model-config") || "{}");
+            const config = JSON.parse(localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}");
             const currentModelIds = config.modelIds || [];
             const currentApiKeys = config.apiKeys || {};
 
@@ -84,13 +85,23 @@ export function AppConfigModal() {
 
         try {
             localStorage.setItem(
-                "user-model-config",
+                USER_MODEL_CONFIG_KEY,
                 JSON.stringify({
                     modelIds: selectedModelIds,
                     apiKeys: apiKeys,
                     models: models.filter((m) => selectedModelIds.includes(m.id)),
                 }),
             );
+            const selectedModels = models.filter((m) => selectedModelIds.includes(m.id));
+            const imageModel = selectedModels.find((m) => m.type === "image");
+            const videoModel = selectedModels.find((m) => m.type === "video");
+            if (imageModel) {
+                updateConfig("model", imageModel.name);
+                updateConfig("imageModel", imageModel.name);
+                updateConfig("baseUrl", imageModel.apiUrl);
+                updateConfig("apiKey", apiKeys[imageModel.id] || "");
+            }
+            if (videoModel) updateConfig("videoModel", videoModel.name);
 
             message.success("配置已保存");
             finishConfig();

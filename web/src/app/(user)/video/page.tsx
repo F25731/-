@@ -20,7 +20,7 @@ export default function VideoPage() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [videoUrl, setVideoUrl] = useState("");
 
-    const videoModels = config.models.filter((m) => m.includes("video") || m.includes("Video")); // TODO: 从后台配置的type过滤
+    const videoModels = config.models.filter((model) => config.modelTypes[model] === "video");
 
     const handleGenerate = async () => {
         if (!selectedModel) {

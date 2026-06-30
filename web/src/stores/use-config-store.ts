@@ -10,8 +10,23 @@ import { normalizeImageApiKeys, normalizeImageKeyTier, type ImageKeyTier } from 
 
 export const DEFAULT_POOL_API_BASE_URL = "https://api.zmoapi.cn";
 export const FIXED_IMAGE_MODEL = "gpt-image-2";
+export const USER_MODEL_CONFIG_KEY = "user-model-config";
 const MAX_IMAGE_GENERATION_COUNT = 8;
 const ALLOWED_IMAGE_SIZES = new Set(["auto", "1:1", "16:9", "4:3", "3:4", "9:16"]);
+
+export type StoredUserModel = {
+    id: string;
+    name: string;
+    type: "image" | "video";
+    apiUrl: string;
+    enabled: boolean;
+};
+
+type StoredUserModelConfig = {
+    modelIds?: string[];
+    apiKeys?: Record<string, string>;
+    models?: StoredUserModel[];
+};
 
 export type AiConfig = {
     channelMode: "remote" | "local";
@@ -29,6 +44,7 @@ export type AiConfig = {
     quality: string;
     size: string;
     count: string;
+    modelTypes: Record<string, "image" | "video">;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -49,6 +65,7 @@ export const defaultConfig: AiConfig = {
     quality: "auto",
     size: "auto",
     count: "1",
+    modelTypes: {},
 };
 
 type ConfigStore = {
@@ -66,6 +83,30 @@ type ConfigStore = {
 };
 
 function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSettings["modelChannel"] | null): AiConfig {
+    const userModelConfig = readUserModelConfig();
+    if (userModelConfig.models.length > 0) {
+        const imageModels = userModelConfig.models.filter((model) => model.type === "image").map((model) => model.name);
+        const videoModels = userModelConfig.models.filter((model) => model.type === "video").map((model) => model.name);
+        const models = userModelConfig.models.map((model) => model.name);
+        const modelTypes = Object.fromEntries(userModelConfig.models.map((model) => [model.name, model.type]));
+        const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || models[0] || "";
+        const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
+        const model = models.includes(config.model) ? config.model : imageModel || videoModel || "";
+        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel });
+        return {
+            ...config,
+            channelMode: "local",
+            baseUrl: runtime.baseUrl || config.baseUrl || DEFAULT_POOL_API_BASE_URL,
+            apiKey: runtime.apiKey,
+            model,
+            imageModel,
+            videoModel,
+            textModel: models.includes(config.textModel) ? config.textModel : model,
+            models,
+            modelTypes,
+        };
+    }
+
     // local 模式:走知梦号池(向后兼容)
     if (config.channelMode === "local") {
         return {
@@ -118,7 +159,7 @@ function normalizeStoredImageCount(count: string | undefined) {
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
-    return Boolean(model.trim()) && (config.channelMode === "remote" || Boolean(readAuthToken(config.imageTier)));
+    return Boolean(model.trim()) && (config.channelMode === "remote" || Boolean(resolveModelRuntimeConfig(config, model).apiKey || readAuthToken(config.imageTier)));
 }
 
 function readAuthToken(tier?: ImageKeyTier) {
@@ -133,12 +174,29 @@ function readAuthToken(tier?: ImageKeyTier) {
     }
 }
 
-// 新增:读取指定模型的 API Key
+export function readUserModelConfig() {
+    if (typeof window === "undefined") return { models: [], apiKeys: {} as Record<string, string> };
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
+        const selectedIds = new Set(parsed.modelIds || []);
+        const models = (parsed.models || []).filter((model) => model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
+        return { models, apiKeys: parsed.apiKeys || {} };
+    } catch {
+        return { models: [], apiKeys: {} as Record<string, string> };
+    }
+}
+
+export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel) {
+    const userModelConfig = readUserModelConfig();
+    const model = userModelConfig.models.find((item) => item.name === modelName);
+    if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
+    return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim() };
+}
+
 function readModelApiKey(model: string): string {
     if (typeof window === "undefined") return "";
     try {
-        const parsed = JSON.parse(window.localStorage.getItem("infinite-canvas-auth-token-v1") || "{}") as { state?: { modelKeys?: Record<string, string> } };
-        return String(parsed.state?.modelKeys?.[model] || "").trim();
+        return resolveModelRuntimeConfig(defaultConfig, model).apiKey;
     } catch {
         return "";
     }
@@ -206,6 +264,7 @@ export const useConfigStore = create<ConfigStore>()(
                         count: normalizeStoredImageCount(config.count),
                         videoSeconds: config.videoSeconds || "6",
                         vquality: config.vquality || "720",
+                        modelTypes: config.modelTypes || {},
                     },
                 };
             },
@@ -221,7 +280,7 @@ export function useEffectiveConfig() {
     // 根据模式选择密钥
     const authToken = useMemo(() => {
         if (effectiveConfig.channelMode === "local") {
-            return readAuthToken(config.imageTier);
+            return resolveModelRuntimeConfig(effectiveConfig).apiKey || readAuthToken(config.imageTier);
         }
         // remote 模式下使用当前选中模型的密钥
         return readModelApiKey(effectiveConfig.model || effectiveConfig.imageModel || "");

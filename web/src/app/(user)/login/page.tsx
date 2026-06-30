@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { useUserStore } from "@/stores/use-user-store";
+import { USER_MODEL_CONFIG_KEY, useConfigStore } from "@/stores/use-config-store";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 
 type LoginFormValues = {
@@ -32,6 +33,7 @@ function LoginContent() {
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
     const [configureAll, setConfigureAll] = useState(false);
+    const updateConfig = useConfigStore((state) => state.updateConfig);
 
     useEffect(() => {
         loadModels();
@@ -78,13 +80,23 @@ function LoginContent() {
 
         try {
             localStorage.setItem(
-                "user-model-config",
+                USER_MODEL_CONFIG_KEY,
                 JSON.stringify({
                     modelIds: values.modelIds,
                     apiKeys: apiKeys,
                     models: models.filter((m) => values.modelIds.includes(m.id)),
                 }),
             );
+            const selectedModels = models.filter((m) => values.modelIds.includes(m.id));
+            const imageModel = selectedModels.find((m) => m.type === "image");
+            const videoModel = selectedModels.find((m) => m.type === "video");
+            if (imageModel) {
+                updateConfig("model", imageModel.name);
+                updateConfig("imageModel", imageModel.name);
+                updateConfig("baseUrl", imageModel.apiUrl);
+                updateConfig("apiKey", apiKeys[imageModel.id] || "");
+            }
+            if (videoModel) updateConfig("videoModel", videoModel.name);
 
             message.success("登录成功");
             router.replace(redirect.startsWith("/") ? redirect : "/canvas");

@@ -40,7 +40,7 @@ export default function ModelsPage() {
         }
     };
 
-    const openModal = (model: Model | null) => {
+    const openModal = (model: AdminModel | null) => {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
@@ -183,7 +183,7 @@ export default function ModelsPage() {
                     <Form.Item name="apiUrl" label="API 地址" rules={[{ required: true, message: "请输入 API 地址" }]} extra="OpenAI 兼容格式的接口地址,例如: https://api.example.com/v1">
                         <Input placeholder="https://api.example.com/v1" />
                     </Form.Item>
-                    <Form.Item name="enabled" label="是否启用" valuePropName="checked">
+                    <Form.Item name="enabled" label="是否启用">
                         <Select
                             options={[
                                 { label: "启用", value: true },

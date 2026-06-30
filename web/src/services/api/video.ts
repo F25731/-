@@ -15,7 +15,8 @@ function aiApiUrl(config: AiConfig, path: string) {
 
 function aiHeaders(config: AiConfig) {
     const token = useUserStore.getState().token;
-    return token ? { Authorization: `Bearer ${token}` } : undefined;
+    const authToken = config.channelMode === "remote" ? token : config.apiKey || token;
+    return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
 
