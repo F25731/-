@@ -66,11 +66,11 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
         if (error instanceof AiRequestError && error.kind === "auth") {
             Modal.error({
                 title: "认证失败",
-                content: "当前 Key 无效或已失效，请重新登录配置 Key。",
+                content: "当前 Key 无效或已失效，请重新配置 API Key。",
                 okText: "去配置",
                 onOk: () => {
                     clearSession();
-                    window.location.href = "/login";
+                    openConfigDialog(true);
                 },
             });
             return true;

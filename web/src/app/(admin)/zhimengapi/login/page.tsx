@@ -43,14 +43,7 @@ function AdminLoginContent() {
         <main className="flex h-dvh items-center justify-center bg-background px-6">
             <section className="w-full max-w-[400px]">
                 <div className="mb-7 text-center">
-                    <span
-                        className="mx-auto mb-4 block size-12 bg-stone-950 dark:bg-stone-100"
-                        style={{
-                            mask: "url(/logo.svg) center / contain no-repeat",
-                            WebkitMask: "url(/logo.svg) center / contain no-repeat",
-                        }}
-                        aria-label="知梦画布"
-                    />
+                    <img src="/logo.svg" alt="知梦画布" className="mx-auto mb-4 size-12" />
                     <h1 className="text-3xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">管理后台</h1>
                     <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">仅管理员可访问。</p>
                 </div>

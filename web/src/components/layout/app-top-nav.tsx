@@ -8,7 +8,6 @@ import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
-import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -21,7 +20,6 @@ export function AppTopNav() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
-    const user = useUserStore((state) => state.user);
     const isReady = useUserStore((state) => state.isReady);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
@@ -34,13 +32,7 @@ export function AppTopNav() {
                     <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
                         <div className="flex min-w-0 items-center">
                             <Link href="/" className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
-                                <span
-                                    className="size-5 shrink-0 bg-current"
-                                    style={{
-                                        mask: "url(/logo.svg) center / contain no-repeat",
-                                        WebkitMask: "url(/logo.svg) center / contain no-repeat",
-                                    }}
-                                />
+                                <img src="/logo.svg" alt="" className="size-6 shrink-0" />
                                 <span className="text-base font-medium">知梦画布</span>
                             </Link>
 
@@ -78,16 +70,14 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            {!isReady ? null : user ? (
-                                <UserStatusActions />
-                            ) : (
+                            {!isReady ? null : (
                                 <>
                                     <button
                                         type="button"
                                         className="inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white [&_svg]:size-4"
                                         onClick={() => openConfigDialog(false)}
-                                        aria-label="配置"
-                                        title="配置"
+                                        aria-label="API Key 配置"
+                                        title="API Key 配置"
                                     >
                                         <Settings2 className="size-4" />
                                     </button>
@@ -98,9 +88,6 @@ export function AppTopNav() {
                                         aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
                                         title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
                                     />
-                                    <Link href="/login" className="text-sm font-medium text-stone-600 underline-offset-4 transition hover:text-stone-950 hover:underline dark:text-stone-300 dark:hover:text-stone-100">
-                                        登录
-                                    </Link>
                                 </>
                             )}
                         </div>

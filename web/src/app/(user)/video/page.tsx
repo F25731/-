@@ -62,9 +62,6 @@ export default function VideoPage() {
                                 <div>
                                     <div className="mb-2 flex items-center justify-between">
                                         <Typography.Text className="text-sm font-medium">视频模型</Typography.Text>
-                                        <Typography.Text type="secondary" className="text-xs">
-                                            1000 积分/次
-                                        </Typography.Text>
                                     </div>
                                     <Select
                                         size="large"

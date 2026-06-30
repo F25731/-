@@ -1,6 +1,6 @@
 ﻿import axios from "axios";
 
-import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -196,7 +196,9 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return config.channelMode === "remote" ? `/api/v1${path}` : buildApiUrl(config.baseUrl, path);
+    if (config.channelMode === "remote") return `/api/v1${path}`;
+    const runtime = resolveModelRuntimeConfig(config, config.model);
+    return buildApiUrl(runtime.baseUrl || config.baseUrl, path);
 }
 
 function aiHeaders(config: AiConfig, contentType?: string) {
@@ -204,8 +206,9 @@ function aiHeaders(config: AiConfig, contentType?: string) {
     const token = userStore.token.trim();
     const imageTier = normalizeImageKeyTier(config.imageTier);
     const tierApiKey = normalizeImageApiKeys(userStore.apiKeys)[imageTier]?.trim() || "";
-    const apiKey = String(config.apiKey || "").trim();
-    const authToken = config.channelMode === "remote" ? token : tierApiKey || apiKey || token;
+    const runtime = config.channelMode === "remote" ? { baseUrl: config.baseUrl, apiKey: config.apiKey } : resolveModelRuntimeConfig(config, config.model);
+    const apiKey = String(runtime.apiKey || config.apiKey || "").trim();
+    const authToken = config.channelMode === "remote" ? token : apiKey || tierApiKey || token;
     return config.channelMode === "remote"
         ? {
               ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -214,8 +217,13 @@ function aiHeaders(config: AiConfig, contentType?: string) {
         : {
               ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
               ...(contentType ? { "Content-Type": contentType } : {}),
-              ...(config.baseUrl ? { "x-image-api-base-url": config.baseUrl } : {}),
+              ...(runtime.baseUrl || config.baseUrl ? { "x-image-api-base-url": runtime.baseUrl || config.baseUrl } : {}),
           };
+}
+
+function aiModel(config: AiConfig) {
+    if (config.channelMode === "remote") return config.model;
+    return resolveModelRuntimeConfig(config, config.model).modelId || config.model;
 }
 
 
@@ -232,7 +240,7 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
         const images = await requestImageJob(
             "generations",
             {
-                model: config.model,
+                model: aiModel(config),
                 prompt: withSystemPrompt(config, prompt),
                 n,
                 ...(quality ? { quality } : {}),
@@ -253,7 +261,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestSize = resolveRequestSize(quality, config.size);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const formData = new FormData();
-    formData.set("model", config.model);
+    formData.set("model", aiModel(config));
     formData.set("prompt", withSystemPrompt(config, requestPrompt));
     formData.set("n", String(n));
     formData.set("response_format", "b64_json");
@@ -327,7 +335,7 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
         const response = await axios.post(
             aiApiUrl(config, "/chat/completions"),
             {
-                model: config.model,
+                model: aiModel(config),
                 messages: withSystemMessage(config, messages),
                 stream: true,
             },

@@ -306,11 +306,11 @@ function InfiniteCanvasPage() {
             if (error instanceof AiRequestError && error.kind === "auth") {
                 modal.error({
                     title: "Key 无效或已过期",
-                    content: "当前 Key 不可用，请重新登录或更换 Key。",
-                    okText: "知道了",
+                    content: "当前 Key 不可用，请重新配置 API Key。",
+                    okText: "去配置",
                     onOk: () => {
                         clearSession();
-                        router.push("/login");
+                        openConfigDialog(true);
                     },
                 });
                 return true;

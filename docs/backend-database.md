@@ -87,12 +87,13 @@
 
 ### admin_models
 
-后台模型配置表。用于保存前端登录和配置弹窗可选择的图片、视频模型。
+后台模型配置表。用于保存前端 API Key 配置弹窗可选择的图片、视频模型。
 
 | 字段           | 类型     | 说明                     |
 |--------------|--------|------------------------|
 | `id`         | string | 主键                     |
-| `name`       | string | 模型名称                   |
+| `name`       | string | 前端展示名称                 |
+| `model_id`   | string | 实际请求上游接口的模型 ID，留空时使用展示名称 |
 | `type`       | string | 模型类型：`image`、`video` |
 | `api_url`    | string | OpenAI 兼容接口地址         |
 | `enabled`    | bool   | 是否启用                   |

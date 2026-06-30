@@ -120,7 +120,8 @@ export default function ModelsPage() {
                         dataSource={models}
                         pagination={false}
                         columns={[
-                            { title: "模型名称", dataIndex: "name", width: 200, render: (value) => <Typography.Text strong>{value}</Typography.Text> },
+                            { title: "显示名称", dataIndex: "name", width: 200, render: (value) => <Typography.Text strong>{value}</Typography.Text> },
+                            { title: "调用模型 ID", dataIndex: "modelId", width: 180, render: (value, record) => <Typography.Text code>{value || record.name}</Typography.Text> },
                             {
                                 title: "类型",
                                 dataIndex: "type",
@@ -169,8 +170,11 @@ export default function ModelsPage() {
                 }
             >
                 <Form form={form} layout="vertical" requiredMark={false}>
-                    <Form.Item name="name" label="模型名称" rules={[{ required: true, message: "请输入模型名称" }]}>
-                        <Input placeholder="例如: Gemini Pro Vision" />
+                    <Form.Item name="name" label="显示名称" rules={[{ required: true, message: "请输入显示名称" }]} extra="前端下拉展示给用户看的名称。">
+                        <Input placeholder="例如: ChatGPT生图中转站" />
+                    </Form.Item>
+                    <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数,例如: gpt-image-2。留空时默认使用显示名称。">
+                        <Input placeholder="例如: gpt-image-2" />
                     </Form.Item>
                     <Form.Item name="type" label="模型类型" rules={[{ required: true }]}>
                         <Select

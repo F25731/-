@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { App, Button, Checkbox, Form, Input, Modal, Select, Space, Typography } from "antd";
 
 import { USER_MODEL_CONFIG_KEY, useConfigStore } from "@/stores/use-config-store";
-import { useUserStore } from "@/stores/use-user-store";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { KeyRound } from "lucide-react";
 
@@ -16,7 +15,6 @@ export function AppConfigModal() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
-    const user = useUserStore((state) => state.user);
     const [models, setModels] = useState<AdminModel[]>([]);
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
@@ -122,8 +120,8 @@ export function AppConfigModal() {
         <Modal
             title={
                 <div>
-                    <div className="text-lg font-semibold">配置</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">管理模型和密钥</div>
+                    <div className="text-lg font-semibold">API Key 配置</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500">选择模型并填写对应密钥</div>
                 </div>
             }
             open={isConfigOpen}
@@ -141,12 +139,6 @@ export function AppConfigModal() {
         >
             <div className="pt-1">
                 <Form form={form} layout="vertical" requiredMark={false}>
-                    {/* 当前账号 */}
-                    <div className="mb-4 rounded-lg border border-stone-200 px-3 py-2 text-sm dark:border-stone-800">
-                        <div className="font-medium">当前账号</div>
-                        <div className="mt-1 text-xs text-stone-500">{user ? `${user.displayName || user.username}` : "未登录"}</div>
-                    </div>
-
                     {/* 选择模型 */}
                     <Form.Item label={<span className="font-medium text-stone-800 dark:text-stone-200">选择模型</span>}>
                         <Space direction="vertical" className="w-full" size={12}>
@@ -194,7 +186,7 @@ export function AppConfigModal() {
                     {/* 提示信息 */}
                     <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs dark:border-blue-900 dark:bg-blue-950">
                         <Typography.Text className="text-xs text-blue-700 dark:text-blue-300">
-                            💡 提示: 可以添加新模型或修改现有模型的密钥。配置会立即生效。
+                            API Key 只保存在当前浏览器本地，保存后会立即用于前端请求。
                         </Typography.Text>
                     </div>
                 </Form>

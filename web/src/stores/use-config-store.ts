@@ -17,6 +17,7 @@ const ALLOWED_IMAGE_SIZES = new Set(["auto", "1:1", "16:9", "4:3", "3:4", "9:16"
 export type StoredUserModel = {
     id: string;
     name: string;
+    modelId?: string;
     type: "image" | "video";
     apiUrl: string;
     enabled: boolean;
@@ -190,7 +191,7 @@ export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.m
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
-    return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim() };
+    return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim(), modelId: (model.modelId || model.name).trim() };
 }
 
 function readModelApiKey(model: string): string {

@@ -2,7 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
-import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -10,18 +10,22 @@ type VideoResponse = { id: string; status?: string; error?: { message?: string }
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return config.channelMode === "remote" ? `/api/v1${path}` : buildApiUrl(config.baseUrl, path);
+    if (config.channelMode === "remote") return `/api/v1${path}`;
+    const runtime = resolveModelRuntimeConfig(config, config.model || config.videoModel);
+    return buildApiUrl(runtime.baseUrl || config.baseUrl, path);
 }
 
 function aiHeaders(config: AiConfig) {
     const token = useUserStore.getState().token;
-    const authToken = config.channelMode === "remote" ? token : config.apiKey || token;
+    const runtime = config.channelMode === "remote" ? { apiKey: config.apiKey } : resolveModelRuntimeConfig(config, config.model || config.videoModel);
+    const authToken = config.channelMode === "remote" ? token : runtime.apiKey || config.apiKey || token;
     return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
-    const model = config.model || config.videoModel;
+    const displayModel = config.model || config.videoModel;
+    const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
     const body = new FormData();
     body.append("model", model);
     body.append("prompt", prompt);

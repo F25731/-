@@ -66,11 +66,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             >
                 <Flex align="center" justify={collapsed ? "center" : "space-between"} gap={12} style={{ height: adminLayoutStyle.brandHeight, padding: collapsed ? "0" : "0 20px", borderBottom: `1px solid ${antToken.colorBorderSecondary}` }}>
                     {collapsed ? (
-                        <span aria-hidden style={{ display: "inline-block", width: 30, height: 30, background: antToken.colorText, WebkitMask: "url(/logo.svg) center / contain no-repeat", mask: "url(/logo.svg) center / contain no-repeat" }} />
+                        <img src="/logo.svg" alt="" style={{ width: 30, height: 30 }} />
                     ) : (
                         <>
                             <Flex align="center" gap={12}>
-                                <span aria-hidden style={{ display: "inline-block", width: 30, height: 30, background: antToken.colorText, WebkitMask: "url(/logo.svg) center / contain no-repeat", mask: "url(/logo.svg) center / contain no-repeat" }} />
+                                <img src="/logo.svg" alt="" style={{ width: 30, height: 30 }} />
                                 <Typography.Text strong style={{ fontSize: 18, letterSpacing: 0 }}>
                                     无限画布
                                 </Typography.Text>
@@ -123,7 +123,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                         {pageTitle}
                     </Typography.Title>
                     <Flex align="center" gap={4}>
-                        <UserStatusActions showConfig={false} />
+                        <UserStatusActions showConfig={false} showAccount />
                     </Flex>
                 </Layout.Header>
                 <Layout.Content style={{ minHeight: 0, overflow: "auto" }}>{children}</Layout.Content>

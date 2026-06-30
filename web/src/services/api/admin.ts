@@ -238,6 +238,7 @@ export async function testChannelModel(token: string, payload: AdminChannelActio
 export type AdminModel = {
     id: string;
     name: string;
+    modelId: string;
     type: "image" | "video";
     apiUrl: string;
     enabled: boolean;

@@ -11,6 +11,7 @@ const (
 type AdminModel struct {
 	ID        string         `json:"id" gorm:"primaryKey"`
 	Name      string         `json:"name"`
+	ModelID   string         `json:"modelId"`
 	Type      AdminModelType `json:"type" gorm:"index"`
 	APIURL    string         `json:"apiUrl"`
 	Enabled   bool           `json:"enabled"`

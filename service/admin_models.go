@@ -23,7 +23,11 @@ func AdminModels() (model.AdminModelList, error) {
 func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	now := now()
 	item.Name = strings.TrimSpace(item.Name)
+	item.ModelID = strings.TrimSpace(item.ModelID)
 	item.APIURL = strings.TrimSpace(item.APIURL)
+	if item.ModelID == "" {
+		item.ModelID = item.Name
+	}
 	if item.Type == "" {
 		item.Type = model.AdminModelTypeImage
 	}
