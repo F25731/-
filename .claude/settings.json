@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:/Users/F1589/Desktop/画布修改\" status)",
+      "Read(//c/tmp/huabu/**)",
+      "Bash(ls -la .claude)",
+      "Bash(mkdir -p /c/tmp/huabu/.claude/plans)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git add *)"
+    ],
+    "additionalDirectories": [
+      "C:\\tmp\\huabu\\.claude\\plans"
+    ]
+  }
+}
