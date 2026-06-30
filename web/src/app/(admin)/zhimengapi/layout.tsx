@@ -1,6 +1,6 @@
 "use client";
 
-import { FileTextOutlined, HomeOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PictureOutlined, SettingOutlined, TransactionOutlined, UserOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, HomeOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Tooltip, Typography, theme } from "antd";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -12,11 +12,7 @@ import { adminLayoutStyle } from "@/lib/app-theme";
 import { useUserStore } from "@/stores/use-user-store";
 
 const adminMenus = [
-    { key: "/zhimengapi/users", icon: <UserOutlined />, label: "用户管理" },
-    { key: "/zhimengapi/credit-logs", icon: <TransactionOutlined />, label: "算力点日志" },
-    { key: "/zhimengapi/prompts", icon: <FileTextOutlined />, label: "提示词管理" },
-    { key: "/zhimengapi/assets", icon: <PictureOutlined />, label: "素材库" },
-    { key: "/zhimengapi/settings", icon: <SettingOutlined />, label: "系统设置" },
+    { key: "/zhimengapi/models", icon: <AppstoreOutlined />, label: "模型管理" },
 ];
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -29,18 +25,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const isReady = useUserStore((state) => state.isReady);
     const logout = useUserStore((state) => state.clearSession);
     const [collapsed, setCollapsed] = useState(false);
-    const activeKey = pathname.startsWith("/zhimengapi/settings")
-        ? "/zhimengapi/settings"
-        : pathname.startsWith("/zhimengapi/assets")
-          ? "/zhimengapi/assets"
-          : pathname.startsWith("/zhimengapi/prompts")
-            ? "/zhimengapi/prompts"
-            : pathname.startsWith("/zhimengapi/credit-logs")
-              ? "/zhimengapi/credit-logs"
-              : pathname.startsWith("/zhimengapi/users")
-                ? "/zhimengapi/users"
-                : "";
-    const pageTitle = pathname.startsWith("/zhimengapi/settings") ? "系统设置" : pathname.startsWith("/zhimengapi/assets") ? "素材库管理" : pathname.startsWith("/zhimengapi/prompts") ? "提示词管理" : pathname.startsWith("/zhimengapi/credit-logs") ? "算力点日志" : "用户管理";
+    const activeKey = pathname.startsWith("/zhimengapi/models") ? "/zhimengapi/models" : "";
+    const pageTitle = pathname.startsWith("/zhimengapi/models") ? "模型管理" : "管理后台";
     const isAdminLogin = pathname === "/zhimengapi/login";
 
     useEffect(() => {

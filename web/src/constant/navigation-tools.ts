@@ -1,4 +1,4 @@
-import { FileSearch, FileText, Images, Maximize2 } from "lucide-react";
+import { Maximize2, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -7,19 +7,9 @@ export const navigationTools = [
         icon: Maximize2,
     },
     {
-        slug: "prompts",
-        label: "提示词库",
-        icon: FileText,
-    },
-    {
-        slug: "extract",
-        label: "提取提示词",
-        icon: FileSearch,
-    },
-    {
-        slug: "assets",
-        label: "我的素材",
-        icon: Images,
+        slug: "video",
+        label: "视频工作台",
+        icon: Video,
     },
 ] as const;
 
