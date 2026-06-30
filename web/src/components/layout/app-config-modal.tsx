@@ -1,27 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, Modal, Typography } from "antd";
-import Link from "next/link";
+import { App, Button, Checkbox, Form, Input, Modal, Select, Space, Typography } from "antd";
 
 import { useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
+import { KeyRound } from "lucide-react";
 
 export function AppConfigModal() {
     const { message } = App.useApp();
+    const [form] = Form.useForm();
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const user = useUserStore((state) => state.user);
     const [models, setModels] = useState<AdminModel[]>([]);
-    const [modelKeys, setModelKeys] = useState<Record<string, string>>({});
+    const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+    const [configureAll, setConfigureAll] = useState(false);
 
     useEffect(() => {
         if (!isConfigOpen) return;
         loadModels();
-        loadModelKeys();
+        loadCurrentConfig();
     }, [isConfigOpen]);
 
     const loadModels = async () => {
@@ -33,25 +36,64 @@ export function AppConfigModal() {
         }
     };
 
-    const loadModelKeys = () => {
+    const loadCurrentConfig = () => {
         try {
             const config = JSON.parse(localStorage.getItem("user-model-config") || "{}");
-            setModelKeys(config.apiKeys || {});
+            const currentModelIds = config.modelIds || [];
+            const currentApiKeys = config.apiKeys || {};
+
+            setSelectedModelIds(currentModelIds);
+            setApiKeys(currentApiKeys);
+            form.setFieldValue("modelIds", currentModelIds);
+            setConfigureAll(false);
         } catch {
-            setModelKeys({});
+            setSelectedModelIds([]);
+            setApiKeys({});
         }
     };
 
-    const updateModelKey = (modelId: string, key: string) => {
-        setModelKeys((prev) => ({ ...prev, [modelId]: key.trim() }));
+    const handleConfigureAllChange = (checked: boolean) => {
+        setConfigureAll(checked);
+        if (checked) {
+            const allIds = models.map((m) => m.id);
+            setSelectedModelIds(allIds);
+            form.setFieldValue("modelIds", allIds);
+        } else {
+            setSelectedModelIds([]);
+            form.setFieldValue("modelIds", []);
+        }
     };
 
-    const saveModelKeys = () => {
+    const handleModelChange = (ids: string[]) => {
+        setSelectedModelIds(ids);
+        setConfigureAll(ids.length === models.length);
+    };
+
+    const saveConfig = () => {
+        if (selectedModelIds.length === 0) {
+            message.warning("请至少选择一个模型");
+            return;
+        }
+
+        // 检查每个选中的模型是否都输入了 API Key
+        const missingKeys = selectedModelIds.filter((id) => !apiKeys[id]?.trim());
+        if (missingKeys.length > 0) {
+            message.warning("请为所有选中的模型输入 API Key");
+            return;
+        }
+
         try {
-            const config = JSON.parse(localStorage.getItem("user-model-config") || "{}");
-            config.apiKeys = modelKeys;
-            localStorage.setItem("user-model-config", JSON.stringify(config));
-            message.success("模型密钥已保存");
+            localStorage.setItem(
+                "user-model-config",
+                JSON.stringify({
+                    modelIds: selectedModelIds,
+                    apiKeys: apiKeys,
+                    models: models.filter((m) => selectedModelIds.includes(m.id)),
+                }),
+            );
+
+            message.success("配置已保存");
+            finishConfig();
         } catch (error) {
             message.error("保存失败");
         }
@@ -70,7 +112,7 @@ export function AppConfigModal() {
             title={
                 <div>
                     <div className="text-lg font-semibold">配置</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">管理模型密钥</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500">管理模型和密钥</div>
                 </div>
             }
             open={isConfigOpen}
@@ -78,56 +120,71 @@ export function AppConfigModal() {
             centered
             onCancel={() => setConfigDialogOpen(false)}
             footer={
-                <Button type="primary" onClick={finishConfig}>
-                    完成
-                </Button>
+                <Space>
+                    <Button onClick={() => setConfigDialogOpen(false)}>取消</Button>
+                    <Button type="primary" onClick={saveConfig}>
+                        保存配置
+                    </Button>
+                </Space>
             }
         >
             <div className="pt-1">
-                <Form layout="vertical" requiredMark={false}>
+                <Form form={form} layout="vertical" requiredMark={false}>
                     {/* 当前账号 */}
                     <div className="mb-4 rounded-lg border border-stone-200 px-3 py-2 text-sm dark:border-stone-800">
                         <div className="font-medium">当前账号</div>
                         <div className="mt-1 text-xs text-stone-500">{user ? `${user.displayName || user.username}` : "未登录"}</div>
-                        {!user ? (
-                            <Link href="/login" className="mt-2 inline-flex text-xs font-medium text-stone-950 underline-offset-4 hover:underline dark:text-stone-100" onClick={() => setConfigDialogOpen(false)}>
-                                去登录
-                            </Link>
-                        ) : null}
                     </div>
 
-                    {/* 模型密钥配置 */}
-                    <div className="mb-4 rounded-lg border border-stone-200 px-3 py-3 dark:border-stone-800">
-                        <div className="mb-3 text-sm font-medium">模型密钥配置</div>
-                        {models.length === 0 ? (
-                            <div className="py-4 text-center text-sm text-stone-500">暂无可用模型</div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div className="text-xs text-stone-500">为每个模型配置 API Key。登录后选择的模型会显示在这里。</div>
-                                {models.map((model) => (
+                    {/* 选择模型 */}
+                    <Form.Item label={<span className="font-medium text-stone-800 dark:text-stone-200">选择模型</span>}>
+                        <Space direction="vertical" className="w-full" size={12}>
+                            <Checkbox checked={configureAll} onChange={(e) => handleConfigureAllChange(e.target.checked)}>
+                                <span className="font-medium">配置所有模型</span>
+                            </Checkbox>
+
+                            <Form.Item name="modelIds" noStyle>
+                                <Select
+                                    mode="multiple"
+                                    placeholder="请选择要使用的模型"
+                                    value={selectedModelIds}
+                                    onChange={handleModelChange}
+                                    options={models.map((m) => ({
+                                        label: `${m.name} (${m.type === "image" ? "图片" : "视频"})`,
+                                        value: m.id,
+                                    }))}
+                                />
+                            </Form.Item>
+                        </Space>
+                    </Form.Item>
+
+                    {/* 配置密钥 */}
+                    {selectedModelIds.length > 0 && (
+                        <div className="mb-4 space-y-4 rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
+                            <Typography.Text className="block text-sm font-medium">为选中的模型配置 API Key</Typography.Text>
+                            {models
+                                .filter((m) => selectedModelIds.includes(m.id))
+                                .map((model) => (
                                     <div key={model.id}>
-                                        <Form.Item
-                                            label={
-                                                <span className="text-xs">
-                                                    {model.name} <span className="text-stone-400">({model.type === "image" ? "图片" : "视频"})</span>
-                                                </span>
-                                            }
-                                            className="mb-0"
-                                        >
-                                            <Input.Password autoComplete="off" value={modelKeys[model.id] || ""} onChange={(e) => updateModelKey(model.id, e.target.value)} placeholder="sk-..." />
-                                        </Form.Item>
+                                        <Typography.Text className="mb-2 block text-xs text-stone-600 dark:text-stone-400">
+                                            {model.name} ({model.type === "image" ? "图片模型" : "视频模型"})
+                                        </Typography.Text>
+                                        <Input.Password
+                                            prefix={<KeyRound className="size-4 text-stone-400" />}
+                                            placeholder="sk-..."
+                                            value={apiKeys[model.id] || ""}
+                                            onChange={(e) => setApiKeys({ ...apiKeys, [model.id]: e.target.value })}
+                                        />
                                     </div>
                                 ))}
-                                <Button type="primary" onClick={saveModelKeys}>
-                                    保存密钥
-                                </Button>
-                            </div>
-                        )}
-                    </div>
+                        </div>
+                    )}
 
                     {/* 提示信息 */}
                     <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs dark:border-blue-900 dark:bg-blue-950">
-                        <Typography.Text className="text-xs text-blue-700 dark:text-blue-300">💡 提示: 如需添加或切换模型，请前往登录页面重新配置</Typography.Text>
+                        <Typography.Text className="text-xs text-blue-700 dark:text-blue-300">
+                            💡 提示: 可以添加新模型或修改现有模型的密钥。配置会立即生效。
+                        </Typography.Text>
                     </div>
                 </Form>
             </div>
