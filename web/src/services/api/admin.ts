@@ -233,3 +233,39 @@ export async function fetchChannelModels(token: string, payload: AdminChannelAct
 export async function testChannelModel(token: string, payload: AdminChannelActionRequest) {
     return apiPost<string>("/api/admin/settings/channel-test", payload, token);
 }
+
+// 模型管理 API
+export type AdminModel = {
+    id: string;
+    name: string;
+    type: "image" | "video";
+    apiUrl: string;
+    enabled: boolean;
+    remark: string;
+};
+
+export type AdminModelListResponse = {
+    items: AdminModel[];
+    total: number;
+};
+
+export async function fetchAdminModels(token: string) {
+    return apiGet<AdminModelListResponse>("/api/admin/models", undefined, token);
+}
+
+export async function createAdminModel(token: string, model: Omit<AdminModel, "id">) {
+    return apiPost<AdminModel>("/api/admin/models", model, token);
+}
+
+export async function updateAdminModel(token: string, id: string, model: Partial<AdminModel>) {
+    return apiPost<AdminModel>(`/api/admin/models/${encodeURIComponent(id)}`, model, token);
+}
+
+export async function deleteAdminModel(token: string, id: string) {
+    return apiDelete<boolean>(`/api/admin/models/${encodeURIComponent(id)}`, token);
+}
+
+// 公开的模型列表 API (无需 token)
+export async function fetchPublicModels() {
+    return apiGet<AdminModel[]>("/api/models");
+}

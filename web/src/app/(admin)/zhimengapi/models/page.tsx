@@ -5,17 +5,9 @@ import { App, Button, Card, Flex, Form, Input, Modal, Select, Space, Table, Tag,
 import { useEffect, useState } from "react";
 
 import { useUserStore } from "@/stores/use-user-store";
+import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
 
 type ModelType = "image" | "video";
-
-type Model = {
-    id: string;
-    name: string;
-    type: ModelType;
-    apiUrl: string;
-    enabled: boolean;
-    remark: string;
-};
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片模型",
@@ -25,29 +17,22 @@ const modelTypeLabels: Record<ModelType, string> = {
 export default function ModelsPage() {
     const { message } = App.useApp();
     const token = useUserStore((state) => state.token);
-    const [models, setModels] = useState<Model[]>([]);
+    const [models, setModels] = useState<AdminModel[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [editingModel, setEditingModel] = useState<Model | null>(null);
+    const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [form] = Form.useForm<Model>();
+    const [form] = Form.useForm<AdminModel>();
 
     useEffect(() => {
         void loadModels();
-    }, []);
+    }, [token]);
 
     const loadModels = async () => {
+        if (!token) return;
         setIsLoading(true);
         try {
-            // TODO: 从后端加载模型列表
-            // const data = await fetchModels(token);
-            // setModels(data);
-
-            // 临时测试数据
-            setModels([
-                { id: "1", name: "Gemini Pro Vision", type: "image", apiUrl: "https://api.example.com/v1", enabled: true, remark: "Google 图片模型" },
-                { id: "2", name: "DALL-E 3", type: "image", apiUrl: "https://api.openai.com/v1", enabled: true, remark: "OpenAI 图片模型" },
-                { id: "3", name: "Gemini Video", type: "video", apiUrl: "https://api.example.com/v1", enabled: true, remark: "Google 视频模型" },
-            ]);
+            const data = await fetchAdminModels(token);
+            setModels(data.items || []);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载模型失败");
         } finally {
@@ -73,25 +58,19 @@ export default function ModelsPage() {
     };
 
     const saveModel = async () => {
+        if (!token) return;
         try {
             const values = await form.validateFields();
 
-            // TODO: 保存到后端
-            // if (editingModel) {
-            //     await updateModel(token, editingModel.id, values);
-            // } else {
-            //     await createModel(token, values);
-            // }
-
-            // 临时更新本地
             if (editingModel) {
-                setModels((prev) => prev.map((m) => (m.id === editingModel.id ? { ...m, ...values } : m)));
+                await updateAdminModel(token, editingModel.id, values);
                 message.success("模型已更新");
             } else {
-                setModels((prev) => [...prev, { ...values, id: Date.now().toString() }]);
+                await createAdminModel(token, values);
                 message.success("模型已添加");
             }
 
+            await loadModels();
             closeModal();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败");
@@ -99,16 +78,15 @@ export default function ModelsPage() {
     };
 
     const deleteModel = async (id: string) => {
+        if (!token) return;
         Modal.confirm({
             title: "确认删除",
             content: "确定要删除这个模型吗?",
             onOk: async () => {
                 try {
-                    // TODO: 调用后端删除接口
-                    // await deleteModelById(token, id);
-
-                    setModels((prev) => prev.filter((m) => m.id !== id));
+                    await deleteAdminModel(token, id);
                     message.success("模型已删除");
+                    await loadModels();
                 } catch (error) {
                     message.error(error instanceof Error ? error.message : "删除失败");
                 }

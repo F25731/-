@@ -53,7 +53,7 @@ export default function VideoPage() {
                 </header>
 
                 {/* 主体内容 */}
-                <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
+                <div className="grid gap-6 lg:grid-cols-[480px_1fr]">
                     {/* 左侧配置面板 */}
                     <aside className="space-y-6">
                         <Card className="border-stone-200 dark:border-stone-800">
@@ -122,7 +122,7 @@ export default function VideoPage() {
                                     </Typography.Text>
 
                                     {/* 上传参考图 */}
-                                    <Upload.Dragger className="mb-3" style={{ padding: "16px" }}>
+                                    <Upload.Dragger className="mb-2" style={{ padding: "16px" }}>
                                         <div className="flex flex-col items-center">
                                             <CloudUploadOutlined className="mb-2 text-2xl text-blue-500" />
                                             <Typography.Text className="text-xs">上传参考图</Typography.Text>
@@ -132,8 +132,14 @@ export default function VideoPage() {
                                         </div>
                                     </Upload.Dragger>
 
+                                    {/* 参考图 URL */}
+                                    <div className="mb-3 flex gap-2">
+                                        <Input placeholder="或输入图片 URL" size="large" />
+                                        <Button size="large">添加</Button>
+                                    </div>
+
                                     {/* 上传参考视频 */}
-                                    <Upload.Dragger style={{ padding: "16px" }}>
+                                    <Upload.Dragger className="mb-2" style={{ padding: "16px" }}>
                                         <div className="flex flex-col items-center">
                                             <CloudUploadOutlined className="mb-2 text-2xl text-blue-500" />
                                             <Typography.Text className="text-xs">上传参考视频</Typography.Text>
@@ -142,6 +148,12 @@ export default function VideoPage() {
                                             </Typography.Text>
                                         </div>
                                     </Upload.Dragger>
+
+                                    {/* 参考视频 URL */}
+                                    <div className="flex gap-2">
+                                        <Input placeholder="或输入视频 URL" size="large" />
+                                        <Button size="large">添加</Button>
+                                    </div>
                                 </div>
 
                                 {/* Prompt */}
