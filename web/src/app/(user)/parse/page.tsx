@@ -9,6 +9,11 @@ import { requestLinkParse, type ParseMediaItem, type ParseResult } from "@/servi
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 
 type MediaKind = "video" | "image" | "audio";
+type RawMediaItem = ParseMediaItem & { sourceKind?: MediaKind };
+type DisplayMediaItem = ParseMediaItem & {
+    displayLabel: string;
+    previewKind: MediaKind;
+};
 
 const mediaTitles: Record<MediaKind, string> = {
     video: "视频",
@@ -27,16 +32,13 @@ export default function ParsePage() {
     const [result, setResult] = useState<ParseResult | null>(null);
 
     const parseModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "parse"), [config.modelTypes, config.models]);
+    const mediaGroups = useMemo(() => normalizeMediaGroups(result), [result]);
 
     useEffect(() => {
         if (selectedModel && parseModels.includes(selectedModel)) return;
         const nextModel = config.parseModel && parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
         setSelectedModel(nextModel);
     }, [config.parseModel, parseModels, selectedModel]);
-
-    const imageItems = useMemo(() => withCover(result), [result]);
-    const videoItems = result?.normalized?.videos || [];
-    const audioItems = result?.normalized?.audios || [];
 
     const handleModelChange = (model: string) => {
         setSelectedModel(model);
@@ -66,13 +68,13 @@ export default function ParsePage() {
         }
     };
 
-    const handleDownload = async (item: ParseMediaItem, kind: MediaKind, index: number) => {
+    const handleDownload = async (item: DisplayMediaItem, index: number) => {
         try {
             const response = await fetch(item.url);
             if (!response.ok) throw new Error("download failed");
             const blob = await response.blob();
             const objectUrl = URL.createObjectURL(blob);
-            downloadObjectUrl(objectUrl, buildDownloadName(item, kind, index));
+            downloadObjectUrl(objectUrl, buildDownloadName(item, item.previewKind, index));
             window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         } catch {
             window.open(item.url, "_blank", "noopener,noreferrer");
@@ -132,9 +134,9 @@ export default function ParsePage() {
                             <div className="flex flex-col gap-4">
                                 <ResultSummary result={result} />
                                 <div className="grid gap-4 xl:grid-cols-3">
-                                    <MediaColumn kind="video" items={videoItems} onCopy={copyText} onDownload={handleDownload} />
-                                    <MediaColumn kind="image" items={imageItems} onCopy={copyText} onDownload={handleDownload} />
-                                    <MediaColumn kind="audio" items={audioItems} onCopy={copyText} onDownload={handleDownload} />
+                                    <MediaColumn kind="video" items={mediaGroups.video} onCopy={copyText} onDownload={handleDownload} />
+                                    <MediaColumn kind="image" items={mediaGroups.image} onCopy={copyText} onDownload={handleDownload} />
+                                    <MediaColumn kind="audio" items={mediaGroups.audio} onCopy={copyText} onDownload={handleDownload} />
                                 </div>
                             </div>
                         ) : (
@@ -171,7 +173,7 @@ function ResultSummary({ result }: { result: ParseResult }) {
     );
 }
 
-function MediaColumn({ kind, items, onCopy, onDownload }: { kind: MediaKind; items: ParseMediaItem[]; onCopy: (value: string, successText?: string) => void; onDownload: (item: ParseMediaItem, kind: MediaKind, index: number) => void }) {
+function MediaColumn({ kind, items, onCopy, onDownload }: { kind: MediaKind; items: DisplayMediaItem[]; onCopy: (value: string, successText?: string) => void; onDownload: (item: DisplayMediaItem, index: number) => void }) {
     const Icon = kind === "video" ? PlayCircle : kind === "image" ? ImageIcon : FileAudio;
     return (
         <div className="flex min-h-[460px] flex-col rounded-md border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950">
@@ -187,14 +189,14 @@ function MediaColumn({ kind, items, onCopy, onDownload }: { kind: MediaKind; ite
                 {items.length ? (
                     items.map((item, index) => (
                         <div key={`${item.url}-${index}`} className="overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                            <MediaPreview item={item} kind={kind} />
+                            <MediaPreview item={item} />
                             <div className="flex items-center justify-between gap-2 px-3 py-2">
-                                <Typography.Text className="min-w-0 flex-1 truncate text-xs" title={item.label || item.filename || `${mediaTitles[kind]} ${index + 1}`}>
-                                    {item.label || item.filename || `${mediaTitles[kind]} ${index + 1}`}
+                                <Typography.Text className="min-w-0 flex-1 truncate text-xs" title={item.displayLabel}>
+                                    {item.displayLabel}
                                 </Typography.Text>
                                 <Space size={4}>
                                     <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => onCopy(item.url, "链接已复制")} title="复制链接" />
-                                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(item, kind, index)} title="下载" />
+                                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(item, index)} title="下载" />
                                     <Button size="small" icon={<Link2 className="size-3.5" />} href={item.url} target="_blank" rel="noreferrer" title="新窗口预览" />
                                 </Space>
                             </div>
@@ -210,17 +212,77 @@ function MediaColumn({ kind, items, onCopy, onDownload }: { kind: MediaKind; ite
     );
 }
 
-function MediaPreview({ item, kind }: { item: ParseMediaItem; kind: MediaKind }) {
-    if (kind === "video") return <video src={item.url} controls playsInline preload="metadata" className="aspect-video w-full bg-black object-contain" />;
-    if (kind === "image") return <img src={item.url} alt={item.label || "解析图片"} loading="lazy" className="aspect-video w-full bg-stone-100 object-contain dark:bg-stone-950" />;
+function MediaPreview({ item }: { item: DisplayMediaItem }) {
+    if (item.previewKind === "video") return <video src={item.url} controls playsInline preload="metadata" className="aspect-video w-full bg-black object-contain" />;
+    if (item.previewKind === "image") return <img src={item.url} alt={item.displayLabel} loading="lazy" className="aspect-video w-full bg-stone-100 object-contain dark:bg-stone-950" />;
     return <audio src={item.url} controls preload="metadata" className="w-full px-3 py-6" />;
 }
 
-function withCover(result: ParseResult | null) {
-    const images = result?.normalized?.images || [];
-    const cover = result?.normalized?.cover;
-    if (!cover || images.some((item) => item.url === cover)) return images;
-    return [{ label: "封面", url: cover, type: "image", filename: "cover" }, ...images];
+function normalizeMediaGroups(result: ParseResult | null) {
+    const groups: Record<MediaKind, DisplayMediaItem[]> = { video: [], image: [], audio: [] };
+    const normalized = result?.normalized;
+    if (!normalized) return groups;
+
+    const items: RawMediaItem[] = [
+        ...(normalized.videos || []).map((item) => ({ ...item, sourceKind: "video" as const })),
+        ...(normalized.images || []).map((item) => ({ ...item, sourceKind: "image" as const })),
+        ...(normalized.audios || []).map((item) => ({ ...item, sourceKind: "audio" as const })),
+        ...(normalized.links || []),
+    ];
+    if (normalized.avatar) items.push({ label: "author avatar", url: normalized.avatar, type: "image", filename: "author_avatar", sourceKind: "image" });
+    if (normalized.cover) items.push({ label: "cover", url: normalized.cover, type: "image", filename: "cover", sourceKind: "image" });
+
+    const seen = new Set<string>();
+    for (const item of items) {
+        if (!item.url || seen.has(item.url)) continue;
+        const classified = classifyMediaItem(item);
+        if (!classified) continue;
+        groups[classified.column].push(classified.item);
+        seen.add(item.url);
+    }
+    return groups;
+}
+
+function classifyMediaItem(item: RawMediaItem): { column: MediaKind; item: DisplayMediaItem } | null {
+    const label = `${item.label || ""} ${item.filename || ""} ${item.type || ""}`.toLowerCase();
+    const urlKind = inferUrlKind(item.url);
+    const isAudioCover = hasAny(label, ["music avatar", "music cover", "audio avatar", "audio cover", "sound avatar"]);
+    const isAuthorAvatar = hasAny(label, ["author avatar", "user avatar", "avatar"]) && !isAudioCover;
+    const isVideoCover = hasAny(label, ["video cover", "cover", "poster"]) && !isAudioCover && !isAuthorAvatar;
+    const isAudio = item.sourceKind === "audio" || item.type === "audio" || urlKind === "audio" || hasAny(label, ["music url", "audio url", "music", "audio", "sound", "bgm"]);
+    const isImage = item.sourceKind === "image" || item.type === "image" || urlKind === "image" || isAudioCover || isAuthorAvatar || isVideoCover;
+    const isVideo = item.type === "video" || urlKind === "video" || hasAny(label, ["video", "live_photo"]);
+    const isGenericUrl = ["url", "link"].includes(label.trim()) && !urlKind;
+
+    if (isAudioCover) return toDisplayItem("audio", item, "image", "音频封面");
+    if (isAudio) return toDisplayItem("audio", item, "audio", numberedLabel(item, "音频"));
+    if (isAuthorAvatar) return toDisplayItem("image", item, "image", "作者头像");
+    if (isVideoCover) return toDisplayItem("image", item, "image", "视频封面");
+    if (isImage) return toDisplayItem("image", item, "image", numberedLabel(item, "图片"));
+    if (isVideo && !isGenericUrl) return toDisplayItem("video", item, "video", numberedLabel(item, "视频"));
+    return null;
+}
+
+function toDisplayItem(column: MediaKind, item: RawMediaItem, previewKind: MediaKind, displayLabel: string) {
+    return { column, item: { ...item, previewKind, displayLabel } };
+}
+
+function numberedLabel(item: ParseMediaItem, fallback: string) {
+    const text = `${item.label || item.filename || ""}`.toLowerCase();
+    const match = text.match(/\b(\d+)\b/);
+    return match ? `${fallback} ${match[1]}` : fallback;
+}
+
+function hasAny(value: string, needles: string[]) {
+    return needles.some((needle) => value.includes(needle));
+}
+
+function inferUrlKind(url: string): MediaKind | "" {
+    const ext = readUrlExt(url).toLowerCase();
+    if ([".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".svg"].includes(ext)) return "image";
+    if ([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac"].includes(ext)) return "audio";
+    if ([".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"].includes(ext)) return "video";
+    return "";
 }
 
 function downloadObjectUrl(url: string, filename: string) {
