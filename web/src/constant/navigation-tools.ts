@@ -1,4 +1,4 @@
-import { Maximize2, Video } from "lucide-react";
+import { Maximize2, Search, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -10,6 +10,11 @@ export const navigationTools = [
         slug: "video",
         label: "视频工作台",
         icon: Video,
+    },
+    {
+        slug: "parse",
+        label: "解析工作台",
+        icon: Search,
     },
 ] as const;
 

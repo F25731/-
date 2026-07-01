@@ -5,6 +5,7 @@ type AdminModelType string
 const (
 	AdminModelTypeImage AdminModelType = "image"
 	AdminModelTypeVideo AdminModelType = "video"
+	AdminModelTypeParse AdminModelType = "parse"
 )
 
 // AdminModel 后台可配置的模型。

@@ -7,6 +7,12 @@ import { USER_MODEL_CONFIG_KEY, useConfigStore } from "@/stores/use-config-store
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { KeyRound } from "lucide-react";
 
+const modelTypeLabels: Record<AdminModel["type"], string> = {
+    image: "图片",
+    video: "视频",
+    parse: "解析",
+};
+
 export function AppConfigModal() {
     const { message } = App.useApp();
     const [form] = Form.useForm();
@@ -93,6 +99,7 @@ export function AppConfigModal() {
             const selectedModels = models.filter((m) => selectedModelIds.includes(m.id));
             const imageModel = selectedModels.find((m) => m.type === "image");
             const videoModel = selectedModels.find((m) => m.type === "video");
+            const parseModel = selectedModels.find((m) => m.type === "parse");
             if (imageModel) {
                 updateConfig("model", imageModel.name);
                 updateConfig("imageModel", imageModel.name);
@@ -100,6 +107,7 @@ export function AppConfigModal() {
                 updateConfig("apiKey", apiKeys[imageModel.id] || "");
             }
             if (videoModel) updateConfig("videoModel", videoModel.name);
+            if (parseModel) updateConfig("parseModel", parseModel.name);
 
             message.success("配置已保存");
             finishConfig();
@@ -153,7 +161,7 @@ export function AppConfigModal() {
                                     value={selectedModelIds}
                                     onChange={handleModelChange}
                                     options={models.map((m) => ({
-                                        label: `${m.name} (${m.type === "image" ? "图片" : "视频"})`,
+                                        label: `${m.name} (${modelTypeLabels[m.type]})`,
                                         value: m.id,
                                     }))}
                                 />
@@ -170,7 +178,7 @@ export function AppConfigModal() {
                                 .map((model) => (
                                     <div key={model.id}>
                                         <Typography.Text className="mb-2 block text-xs text-stone-600 dark:text-stone-400">
-                                            {model.name} ({model.type === "image" ? "图片模型" : "视频模型"})
+                                            {model.name} ({modelTypeLabels[model.type]}模型)
                                         </Typography.Text>
                                         <Input.Password
                                             prefix={<KeyRound className="size-4 text-stone-400" />}

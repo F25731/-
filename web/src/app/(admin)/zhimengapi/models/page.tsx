@@ -7,11 +7,18 @@ import { useEffect, useState } from "react";
 import { useUserStore } from "@/stores/use-user-store";
 import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
 
-type ModelType = "image" | "video";
+type ModelType = "image" | "video" | "parse";
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片模型",
     video: "视频模型",
+    parse: "解析模型",
+};
+
+const modelTypeColors: Record<ModelType, string> = {
+    image: "blue",
+    video: "purple",
+    parse: "green",
 };
 
 export default function ModelsPage() {
@@ -104,7 +111,7 @@ export default function ModelsPage() {
                                 模型管理
                             </Typography.Title>
                             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                                配置图片和视频模型,客户使用时输入对应的 API Key
+                                配置图片、视频和解析模型,客户使用时输入对应的 API Key
                             </Typography.Text>
                         </div>
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
@@ -126,7 +133,7 @@ export default function ModelsPage() {
                                 title: "类型",
                                 dataIndex: "type",
                                 width: 120,
-                                render: (value: ModelType) => <Tag color={value === "image" ? "blue" : "purple"}>{modelTypeLabels[value]}</Tag>,
+                                render: (value: ModelType) => <Tag color={modelTypeColors[value]}>{modelTypeLabels[value]}</Tag>,
                             },
                             { title: "API 地址", dataIndex: "apiUrl", ellipsis: true },
                             {
@@ -181,6 +188,7 @@ export default function ModelsPage() {
                             options={[
                                 { label: "图片模型", value: "image" },
                                 { label: "视频模型", value: "video" },
+                                { label: "解析模型", value: "parse" },
                             ]}
                         />
                     </Form.Item>

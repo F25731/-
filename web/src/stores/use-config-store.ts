@@ -18,7 +18,7 @@ export type StoredUserModel = {
     id: string;
     name: string;
     modelId?: string;
-    type: "image" | "video";
+    type: "image" | "video" | "parse";
     apiUrl: string;
     enabled: boolean;
 };
@@ -37,6 +37,7 @@ export type AiConfig = {
     model: string;
     imageModel: string;
     videoModel: string;
+    parseModel: string;
     textModel: string;
     videoSeconds: string;
     vquality: string;
@@ -45,7 +46,7 @@ export type AiConfig = {
     quality: string;
     size: string;
     count: string;
-    modelTypes: Record<string, "image" | "video">;
+    modelTypes: Record<string, "image" | "video" | "parse">;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -58,6 +59,7 @@ export const defaultConfig: AiConfig = {
     model: "",
     imageModel: "",
     videoModel: "",
+    parseModel: "",
     textModel: "",
     videoSeconds: "6",
     vquality: "720",
@@ -88,12 +90,14 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
     if (userModelConfig.models.length > 0) {
         const imageModels = userModelConfig.models.filter((model) => model.type === "image").map((model) => model.name);
         const videoModels = userModelConfig.models.filter((model) => model.type === "video").map((model) => model.name);
+        const parseModels = userModelConfig.models.filter((model) => model.type === "parse").map((model) => model.name);
         const models = userModelConfig.models.map((model) => model.name);
         const modelTypes = Object.fromEntries(userModelConfig.models.map((model) => [model.name, model.type]));
-        const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || models[0] || "";
+        const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "";
         const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
-        const model = models.includes(config.model) ? config.model : imageModel || videoModel || "";
-        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel });
+        const parseModel = parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
+        const model = models.includes(config.model) ? config.model : imageModel || videoModel || parseModel || "";
+        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel });
         return {
             ...config,
             channelMode: "local",
@@ -102,6 +106,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             model,
             imageModel,
             videoModel,
+            parseModel,
             textModel: models.includes(config.textModel) ? config.textModel : model,
             models,
             modelTypes,
@@ -117,6 +122,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             model: config.model || FIXED_IMAGE_MODEL,
             imageModel: config.imageModel || FIXED_IMAGE_MODEL,
             videoModel: config.videoModel || FIXED_IMAGE_MODEL,
+            parseModel: config.parseModel || "",
             textModel: config.textModel || FIXED_IMAGE_MODEL,
             models: config.models.length > 0 ? config.models : [FIXED_IMAGE_MODEL],
         };
@@ -132,6 +138,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             model: FIXED_IMAGE_MODEL,
             imageModel: FIXED_IMAGE_MODEL,
             videoModel: FIXED_IMAGE_MODEL,
+            parseModel: "",
             textModel: FIXED_IMAGE_MODEL,
             models: [FIXED_IMAGE_MODEL],
         };
@@ -144,6 +151,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         model: config.model || modelChannel.defaultModel || modelChannel.defaultImageModel || "",
         imageModel: config.imageModel || modelChannel.defaultImageModel || "",
         videoModel: config.videoModel || modelChannel.defaultVideoModel || "",
+        parseModel: config.parseModel || "",
         textModel: config.textModel || modelChannel.defaultTextModel || "",
         systemPrompt: config.systemPrompt || modelChannel.systemPrompt || "",
     };
@@ -187,7 +195,7 @@ export function readUserModelConfig() {
     }
 }
 
-export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel) {
+export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel || config.parseModel) {
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
@@ -265,6 +273,7 @@ export const useConfigStore = create<ConfigStore>()(
                         count: normalizeStoredImageCount(config.count),
                         videoSeconds: config.videoSeconds || "6",
                         vquality: config.vquality || "720",
+                        parseModel: config.parseModel || "",
                         modelTypes: config.modelTypes || {},
                     },
                 };
@@ -284,8 +293,8 @@ export function useEffectiveConfig() {
             return resolveModelRuntimeConfig(effectiveConfig).apiKey || readAuthToken(config.imageTier);
         }
         // remote 模式下使用当前选中模型的密钥
-        return readModelApiKey(effectiveConfig.model || effectiveConfig.imageModel || "");
-    }, [effectiveConfig.channelMode, effectiveConfig.model, effectiveConfig.imageModel, config.imageTier]);
+        return readModelApiKey(effectiveConfig.model || effectiveConfig.imageModel || effectiveConfig.parseModel || "");
+    }, [effectiveConfig.channelMode, effectiveConfig.model, effectiveConfig.imageModel, effectiveConfig.parseModel, config.imageTier]);
 
     return useMemo(() => ({ ...effectiveConfig, apiKey: authToken }), [authToken, effectiveConfig]);
 }

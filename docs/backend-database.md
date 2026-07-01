@@ -94,7 +94,7 @@
 | `id`         | string | 主键                     |
 | `name`       | string | 前端展示名称                 |
 | `model_id`   | string | 实际请求上游接口的模型 ID，留空时使用展示名称 |
-| `type`       | string | 模型类型：`image`、`video` |
+| `type`       | string | 模型类型：`image`、`video`、`parse` |
 | `api_url`    | string | OpenAI 兼容接口地址         |
 | `enabled`    | bool   | 是否启用                   |
 | `remark`     | string | 备注                     |
