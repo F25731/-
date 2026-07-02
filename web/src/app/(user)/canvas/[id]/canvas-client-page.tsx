@@ -74,6 +74,8 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
 
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
+const REFERENCE_NODE_MAX_WIDTH = 220;
+const REFERENCE_NODE_MAX_HEIGHT = 220;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
@@ -1284,7 +1286,7 @@ function InfiniteCanvasPage() {
             const referenceNodes = await Promise.all(
                 acceptedFiles.map(async (item, index) => {
                     const image = await uploadImage(item);
-                    const nodeSize = fitNodeSize(image.width, image.height);
+                    const nodeSize = fitNodeSize(image.width, image.height, REFERENCE_NODE_MAX_WIDTH, REFERENCE_NODE_MAX_HEIGHT);
                     return {
                         id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
                         type: CanvasNodeType.Image,
