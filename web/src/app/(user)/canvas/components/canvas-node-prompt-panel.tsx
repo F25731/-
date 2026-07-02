@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUp, ClipboardPaste, LoaderCircle, Plus } from "lucide-react";
 import { App, Button } from "antd";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -170,16 +171,19 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
                 placeholder={isNodeGenerating ? "正在生成中" : mode === "video" ? "输入视频生成要求" : mode === "image" ? (hasImageContent ? "输入图片修改要求" : "输入图片生成要求") : hasTextContent ? "输入文本修改要求" : "输入文本生成要求"}
             />
-            {promptMenu ? (
-                <PromptInputContextMenu
-                    x={promptMenu.x}
-                    y={promptMenu.y}
-                    canAddReference={mode === "image"}
-                    onAddReference={uploadReferenceFromMenu}
-                    onPasteText={() => void pastePromptText()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                />
-            ) : null}
+            {promptMenu
+                ? createPortal(
+                      <PromptInputContextMenu
+                          x={promptMenu.x}
+                          y={promptMenu.y}
+                          canAddReference={mode === "image"}
+                          onAddReference={uploadReferenceFromMenu}
+                          onPasteText={() => void pastePromptText()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                      />,
+                      document.body,
+                  )
+                : null}
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">

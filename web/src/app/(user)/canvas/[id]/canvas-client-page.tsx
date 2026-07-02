@@ -2610,7 +2610,6 @@ function InfiniteCanvasPage() {
                     onSelectNodeIds={setSelectedNodeIds}
                     onSessionsChange={handleAssistantSessionsChange}
                     onInsertImage={insertAssistantImage}
-                    onInsertText={insertAssistantText}
                     onPasteImage={pasteAssistantImage}
                     onCollapseStart={() => setAssistantCollapsed(true)}
                     onCollapse={() => setAssistantMounted(false)}

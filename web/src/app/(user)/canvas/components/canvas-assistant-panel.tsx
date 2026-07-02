@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUp, History, ImageIcon, LoaderCircle, MessageSquare, PanelRightClose, Plus, RotateCcw, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUp, History, ImageIcon, LoaderCircle, PanelRightClose, Plus, RotateCcw, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -11,7 +11,7 @@ import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { cn } from "@/lib/utils";
-import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion, type ChatCompletionMessage } from "@/services/api/image";
+import { AiRequestError, requestEdit, requestGeneration } from "@/services/api/image";
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -22,10 +22,9 @@ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasNodeType, type CanvasAssistantImage, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
 
-type AssistantMode = "ask" | "image";
+type AssistantMode = "image";
 const PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = PANEL_MOTION_MS / 1000;
-const ASSISTANT_GENERATION_TIMEOUT_MS = 90_000;
 
 type CanvasAssistantPanelProps = {
     nodes: CanvasNodeData[];
@@ -35,13 +34,12 @@ type CanvasAssistantPanelProps = {
     onSelectNodeIds: (ids: Set<string>) => void;
     onSessionsChange: (sessions: CanvasAssistantSession[], activeSessionId: string | null) => void;
     onInsertImage: (image: CanvasAssistantImage) => void;
-    onInsertText: (text: string) => void;
     onPasteImage: (file: File) => void;
     onCollapseStart: () => void;
     onCollapse: () => void;
 };
 
-export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onInsertImage, onInsertText, onPasteImage, onCollapseStart, onCollapse }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onInsertImage, onPasteImage, onCollapseStart, onCollapse }: CanvasAssistantPanelProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
@@ -51,7 +49,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const [width, setWidth] = useState(390);
     const [view, setView] = useState<"chat" | "history">("chat");
-    const [mode, setMode] = useState<AssistantMode>("image");
     const [prompt, setPrompt] = useState("");
     const [isRunning, setIsRunning] = useState(false);
     const [checkedChatIds, setCheckedChatIds] = useState<string[]>([]);
@@ -118,39 +115,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
         setRemovedReferenceIds(new Set());
     }, [selectedNodeKey]);
 
-    useEffect(() => {
-        const hasLoadingMessage = localSessions.some((session) => session.messages.some((message) => message.isLoading));
-        if (!hasLoadingMessage) {
-            setIsRunning(false);
-            return;
-        }
-
-        const timer = window.setInterval(() => {
-            const now = Date.now();
-            let timedOut = false;
-            setLocalSessions((prev) => {
-                const next = prev.map((session) => {
-                    let sessionTimedOut = false;
-                    const messages = session.messages.map((message) => {
-                        if (!message.isLoading || !message.startedAt || now - message.startedAt < ASSISTANT_GENERATION_TIMEOUT_MS) return message;
-                        timedOut = true;
-                        sessionTimedOut = true;
-                        return {
-                            ...message,
-                            text: "生成超时",
-                            isLoading: false,
-                        };
-                    });
-                    return sessionTimedOut ? { ...session, messages, updatedAt: new Date().toISOString() } : session;
-                });
-                return timedOut ? next : prev;
-            });
-            if (timedOut) setIsRunning(false);
-        }, 1000);
-
-        return () => window.clearInterval(timer);
-    }, [localSessions]);
-
     const updateSession = (sessionId: string, updater: (session: CanvasAssistantSession) => CanvasAssistantSession) => {
         setLocalSessions((prev) => prev.map((session) => (session.id === sessionId ? updater(session) : session)));
     };
@@ -158,7 +122,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
     const appendMessage = (sessionId: string, message: CanvasAssistantMessage) => {
         updateSession(sessionId, (session) => ({
             ...session,
-            title: session.messages.length ? session.title : message.text.slice(0, 18) || "新对话",
+            title: session.messages.length ? session.title : message.text.slice(0, 18) || "新生图",
             messages: [...session.messages, message],
             updatedAt: new Date().toISOString(),
         }));
@@ -204,8 +168,8 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
         cleanupImages({ sessions: [session] });
     };
 
-    const sendMessage = async (text: string, nextMode: AssistantMode, history: CanvasAssistantMessage[], savedReferences?: CanvasAssistantReference[]) => {
-        const requestConfig = { ...effectiveConfig, model: nextMode === "image" ? effectiveConfig.imageModel || effectiveConfig.model : effectiveConfig.textModel || effectiveConfig.model };
+    const sendMessage = async (text: string, nextMode: AssistantMode, savedReferences?: CanvasAssistantReference[]) => {
+        const requestConfig = { ...effectiveConfig, model: effectiveConfig.imageModel || effectiveConfig.model };
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             openConfigDialog(true);
             return;
@@ -221,29 +185,21 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
         const userMessage: CanvasAssistantMessage = { id: nanoid(), role: "user", mode: nextMode, text, references: refs };
         const assistantId = nanoid();
         appendMessage(session.id, userMessage);
-        appendMessage(session.id, { id: assistantId, role: "assistant", mode: nextMode, text: nextMode === "image" ? "正在生成图片" : "正在回答", isLoading: true, startedAt: Date.now() });
+        appendMessage(session.id, { id: assistantId, role: "assistant", mode: nextMode, text: "正在生成图片", isLoading: true, startedAt: Date.now() });
         setPrompt("");
         setIsRunning(true);
 
         try {
-            if (nextMode === "image") {
-                const referenceImages: ReferenceImage[] = await Promise.all(
-                    refs.filter((item) => item.dataUrl).map(async (item) => ({ id: item.id, name: `${item.title}.png`, type: "image/png", dataUrl: await imageToDataUrl(item), storageKey: item.storageKey })),
-                );
-                const images = referenceImages.length ? await requestEdit(requestConfig, text, referenceImages) : await requestGeneration(requestConfig, text);
-                const storedImages = await Promise.all(images.map((image) => uploadImage(image.dataUrl)));
-                updateMessage(session.id, assistantId, {
-                    text: "已生成 " + storedImages.length + " 张图片",
-                    images: storedImages.map((image, index) => ({ id: images[index].id, dataUrl: image.url, storageKey: image.storageKey, prompt: text })),
-                    isLoading: false,
-                });
-                return;
-            }
-
-            const answer = await requestImageQuestion(requestConfig, await buildChatMessages([...history, userMessage]), (streamed) => {
-                updateMessage(session.id, assistantId, { text: streamed, isLoading: false });
+            const referenceImages: ReferenceImage[] = await Promise.all(
+                refs.filter((item) => item.dataUrl).map(async (item) => ({ id: item.id, name: `${item.title}.png`, type: "image/png", dataUrl: await imageToDataUrl(item), storageKey: item.storageKey })),
+            );
+            const images = referenceImages.length ? await requestEdit(requestConfig, text, referenceImages) : await requestGeneration(requestConfig, text);
+            const storedImages = await Promise.all(images.map((image) => uploadImage(image.dataUrl)));
+            updateMessage(session.id, assistantId, {
+                text: "已生成 " + storedImages.length + " 张图片",
+                images: storedImages.map((image, index) => ({ id: images[index].id, dataUrl: image.url, storageKey: image.storageKey, prompt: text })),
+                isLoading: false,
             });
-            updateMessage(session.id, assistantId, { text: answer, isLoading: false });
         } catch (error) {
             handleAiRequestError(error);
             updateMessage(session.id, assistantId, { text: error instanceof Error ? error.message : "生成超时", isLoading: false });
@@ -255,14 +211,14 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
     const submit = async () => {
         const text = prompt.trim();
         if (!text || isRunning) return;
-        await sendMessage(text, mode, messages);
+        await sendMessage(text, "image");
     };
 
     const retryMessage = (message: CanvasAssistantMessage) => {
         const index = messages.findIndex((item) => item.id === message.id);
         const userIndex = messages.slice(0, index).findLastIndex((item) => item.role === "user");
         const user = messages[userIndex];
-        if (user) void sendMessage(user.text, user.mode, messages.slice(0, userIndex), user.references);
+        if (user) void sendMessage(user.text, "image", user.references);
     };
 
     const startResize = () => {
@@ -306,7 +262,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                 <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: theme.node.stroke }}>
                     <div className="flex items-center gap-2 text-sm font-medium">
                         <Sparkles className="size-4" />
-                        {view === "history" ? "历史记录" : "画布助手（未开放）"}
+                        {view === "history" ? "生成记录" : "画布助手"}
                     </div>
                     <div className="flex items-center gap-1">
                         {view === "history" ? (
@@ -327,10 +283,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                                 </Tooltip>
                             </>
                         ) : null}
-                        <Tooltip title={view === "history" ? "返回对话" : "历史记录"}>
+                        <Tooltip title={view === "history" ? "返回生图" : "生成记录"}>
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<History className="size-4" />} onClick={() => setView(view === "history" ? "chat" : "history")} />
                         </Tooltip>
-                        <Tooltip title="去配置">
+                        <Tooltip title="新建生图">
                             <Button
                                 type="text"
                                 shape="circle"
@@ -347,7 +303,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                         <Tooltip title="配置">
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<Settings2 className="size-4" />} onClick={() => openConfigDialog(false)} />
                         </Tooltip>
-                        <Tooltip title="收起对话">
+                        <Tooltip title="收起助手">
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<PanelRightClose className="size-4" />} onClick={collapse} />
                         </Tooltip>
                     </div>
@@ -367,7 +323,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                             onDelete={(id) => setDeleteChatIds([id])}
                         />
                     ) : messages.length ? (
-                        <AssistantMessages messages={messages} onRetry={retryMessage} onInsertImage={onInsertImage} onInsertText={onInsertText} />
+                        <AssistantMessages messages={messages} onRetry={retryMessage} onInsertImage={onInsertImage} />
                     ) : (
                         <div className="flex h-full flex-col items-center justify-center px-1 text-center">
                             <div className="relative font-serif text-4xl font-bold italic tracking-normal" style={{ color: theme.node.text }}>
@@ -381,12 +337,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
 
                 {view === "chat" ? (
                     <AssistantComposer
-                        mode={mode}
                         prompt={prompt}
                         isRunning={isRunning}
                         references={selectedReferences}
                         config={effectiveConfig}
-                        onModeChange={setMode}
                         onPromptChange={setPrompt}
                         onSubmit={submit}
                         onConfigChange={updateConfig}
@@ -400,7 +354,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                 ) : null}
 
                 <Modal
-                    title="删除对话"
+                    title="删除记录"
                     open={deleteChatIds.length > 0}
                     centered
                     onCancel={() => setDeleteChatIds([])}
@@ -420,7 +374,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                         </>
                     }
                 >
-                    <p className="text-sm opacity-60">确认删除 {deleteChatIds.length} 条对话记录？</p>
+                    <p className="text-sm opacity-60">确认删除 {deleteChatIds.length} 条生成记录？</p>
                 </Modal>
             </motion.aside>
         </motion.div>
@@ -428,12 +382,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
 }
 
 function AssistantComposer({
-    mode,
     prompt,
     isRunning,
     references,
     config,
-    onModeChange,
     onPromptChange,
     onSubmit,
     onConfigChange,
@@ -441,12 +393,10 @@ function AssistantComposer({
     onRemoveReference,
     onPasteImage,
 }: {
-    mode: AssistantMode;
     prompt: string;
     isRunning: boolean;
     references: CanvasAssistantReference[];
     config: AiConfig;
-    onModeChange: (mode: AssistantMode) => void;
     onPromptChange: (prompt: string) => void;
     onSubmit: () => void;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
@@ -455,6 +405,10 @@ function AssistantComposer({
     onPasteImage: (file: File) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const selectImageModel = (model: string) => {
+        onConfigChange("imageModel", model);
+        onConfigChange("model", model);
+    };
 
     return (
         <div className="px-2 pb-2" onWheelCapture={(event) => event.stopPropagation()}>
@@ -482,20 +436,13 @@ function AssistantComposer({
                     }}
                     className="thin-scrollbar h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:text-stone-400"
                     style={{ color: theme.node.text }}
-                    placeholder={mode === "image" ? "描述你想生成或修改的图片" : "输入你想问的问题"}
+                    placeholder="描述你想生成或修改的图片"
                 />
                 <div className="mt-2 flex items-center justify-between gap-2">
                     <div className="canvas-composer-tools flex min-w-0 flex-1 items-center gap-1">
                         <CanvasPromptLibrary onSelect={onPromptChange} />
-                        <AssistantModeSwitch mode={mode} theme={theme} onChange={onModeChange} />
-                        {mode === "image" ? (
-                            <>
-                                <ModelPicker className="h-8 shrink-0" config={config} value={config.imageModel || config.model} onChange={() => undefined} onMissingConfig={onMissingConfig} type="image" />
-                                <CanvasImageSettingsPopover config={config} placement="topRight" getPopupContainer={() => document.body} buttonClassName="canvas-composer-settings canvas-composer-icon !h-8 !min-w-8 !rounded-full !px-2" onConfigChange={onConfigChange} onMissingConfig={onMissingConfig} />
-                            </>
-                        ) : (
-                            <ModelPicker className="h-8 shrink-0" config={config} value={config.textModel || config.model} onChange={() => undefined} onMissingConfig={onMissingConfig} />
-                        )}
+                        <ModelPicker className="h-8 shrink-0" config={config} value={config.imageModel || config.model} onChange={selectImageModel} onMissingConfig={onMissingConfig} type="image" />
+                        <CanvasImageSettingsPopover config={config} placement="topRight" getPopupContainer={() => document.body} buttonClassName="canvas-composer-settings canvas-composer-icon !h-8 !min-w-8 !rounded-full !px-2" onConfigChange={onConfigChange} onMissingConfig={onMissingConfig} />
                     </div>
                     <Button
                         type="primary"
@@ -514,52 +461,14 @@ function AssistantComposer({
     );
 }
 
-function AssistantModeSwitch({ mode, theme, onChange }: { mode: AssistantMode; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (mode: AssistantMode) => void }) {
-    return (
-        <div className="canvas-composer-mode-switch flex h-8 shrink-0 items-center rounded-full p-0.5" style={{ background: theme.node.fill }}>
-            {[
-                { value: "ask" as const, title: "对话", icon: <MessageSquare className="size-4" /> },
-                { value: "image" as const, title: "生图", icon: <ImageIcon className="size-4" /> },
-            ].map((item) => (
-                <Tooltip key={item.value} title={item.title}>
-                    <button
-                        type="button"
-                        className="canvas-composer-mode-button flex h-7 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-transparent transition"
-                        style={{ background: mode === item.value ? theme.node.activeStroke : "transparent", color: mode === item.value ? theme.node.panel : theme.node.text }}
-                        onClick={() => onChange(item.value)}
-                        aria-label={item.title}
-                    >
-                        {item.icon}
-                        <span>{item.title}</span>
-                    </button>
-                </Tooltip>
-            ))}
-        </div>
-    );
-}
-
-function SettingTitle({ children, color }: { children: string; color: string }) {
-    return (
-        <div className="text-xs font-medium" style={{ color }}>
-            {children}
-        </div>
-    );
-}
-
-function qualityLabel(value: string) {
-    return ({ auto: "自动", high: "高", medium: "中", low: "低" } as Record<string, string>)[value] || value;
-}
-
 function AssistantMessages({
     messages,
     onRetry,
     onInsertImage,
-    onInsertText,
 }: {
     messages: CanvasAssistantMessage[];
     onRetry: (message: CanvasAssistantMessage) => void;
     onInsertImage: (image: CanvasAssistantImage) => void;
-    onInsertText: (text: string) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -573,18 +482,17 @@ function AssistantMessages({
                     >
                         {message.role === "assistant" ? (
                             <div className="mb-1 flex items-center gap-1.5 text-xs opacity-60">
-                                <MessageSquare className="size-3.5" />
-                                回答
+                                <ImageIcon className="size-3.5" />
+                                生图
                             </div>
                         ) : null}
                         {message.text}
                     </div>
                     {message.references?.length ? <MessageReferences message={message} /> : null}
-                    {message.isLoading ? <ImageGenerationPending compact label={message.mode === "image" ? "正在生成图片" : "正在回答"} className="w-[250px] rounded-2xl border" /> : null}
+                    {message.isLoading ? <ImageGenerationPending compact label="正在生成图片" className="w-[250px] rounded-2xl border" /> : null}
                     {message.role === "assistant" && !message.isLoading ? (
                         <div className="flex gap-1">
                             <Button shape="circle" size="small" style={{ borderColor: theme.node.stroke }} icon={<RotateCcw className="size-3.5" />} onClick={() => onRetry(message)} title="重试" />
-                            {!message.images?.length ? <Button shape="circle" size="small" style={{ borderColor: theme.node.stroke }} icon={<Plus className="size-3.5" />} onClick={() => onInsertText(message.text)} title="插入画布" /> : null}
                         </div>
                     ) : null}
                     {message.images?.map((image) => (
@@ -630,7 +538,7 @@ function AssistantHistory({
                     <input type="checkbox" className="size-4 accent-stone-950" checked={checkedIds.includes(session.id)} onChange={(event) => onToggleChecked(session.id, event.target.checked)} />
                     <button type="button" className="min-w-0 flex-1 text-left text-sm" onClick={() => onOpen(session.id)}>
                         <span className="block truncate">{session.title}</span>
-                        <span className="text-xs opacity-50">{session.messages.length} 条消息</span>
+                        <span className="text-xs opacity-50">{session.messages.length} 条记录</span>
                     </button>
                     <Button type="text" shape="circle" size="small" className="opacity-0 transition group-hover:opacity-100" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(session.id)} title="删除" />
                 </div>
@@ -695,27 +603,9 @@ function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeIds: Set<
         .filter((item): item is CanvasAssistantReference => Boolean(item));
 }
 
-async function buildChatMessages(messages: CanvasAssistantMessage[]): Promise<ChatCompletionMessage[]> {
-    return Promise.all(
-        messages.map(async (message, index) => {
-            if (message.role === "assistant") return { role: "assistant", content: message.text };
-            if (index !== messages.length - 1) return { role: "user", content: message.text };
-            const refs = message.references || [];
-            return {
-                role: "user",
-                content: [
-                    ...refs.flatMap((item) => (item.text ? [{ type: "text" as const, text: item.text }] : [])),
-                    { type: "text", text: message.text },
-                    ...(await Promise.all(refs.filter((item) => item.dataUrl).map(async (item) => ({ type: "image_url" as const, image_url: { url: await imageToDataUrl(item) } })))),
-                ],
-            };
-        }),
-    );
-}
-
 function createSession(): CanvasAssistantSession {
     const now = new Date().toISOString();
-    return { id: nanoid(), title: "新对话", messages: [], createdAt: now, updatedAt: now };
+    return { id: nanoid(), title: "新生图", messages: [], createdAt: now, updatedAt: now };
 }
 
 
