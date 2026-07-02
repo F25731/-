@@ -4,13 +4,14 @@ import { DeleteOutlined, PlusOutlined, SaveOutlined } from "@ant-design/icons";
 import { App, Button, Card, Flex, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
-import { useUserStore } from "@/stores/use-user-store";
+import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
 import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
+import { useUserStore } from "@/stores/use-user-store";
 
 type ModelType = "image" | "video" | "parse";
 
 const modelTypeLabels: Record<ModelType, string> = {
-    image: "图片模型",
+    image: "图片分组",
     video: "视频模型",
     parse: "解析模型",
 };
@@ -21,6 +22,8 @@ const modelTypeColors: Record<ModelType, string> = {
     parse: "green",
 };
 
+const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
+
 export default function ModelsPage() {
     const { message } = App.useApp();
     const token = useUserStore((state) => state.token);
@@ -29,6 +32,7 @@ export default function ModelsPage() {
     const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [form] = Form.useForm<AdminModel>();
+    const currentType = Form.useWatch("type", form) || "image";
 
     useEffect(() => {
         void loadModels();
@@ -51,10 +55,10 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue(model);
+            form.setFieldsValue({ ...model, tierModels: model.tierModels || {}, supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"] });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image" });
+            form.setFieldsValue({ enabled: true, type: "image", tierModels: {}, supportedSizes: ["auto", "1:1"] });
         }
     };
 
@@ -68,12 +72,17 @@ export default function ModelsPage() {
         if (!token) return;
         try {
             const values = await form.validateFields();
+            const payload = normalizeModelPayload(values);
+            if (payload.type === "image" && !Object.keys(payload.tierModels || {}).length) {
+                message.error("请至少填写一个清晰度对应模型");
+                return;
+            }
 
             if (editingModel) {
-                await updateAdminModel(token, editingModel.id, values);
+                await updateAdminModel(token, editingModel.id, payload);
                 message.success("模型已更新");
             } else {
-                await createAdminModel(token, values);
+                await createAdminModel(token, payload as Omit<AdminModel, "id">);
                 message.success("模型已添加");
             }
 
@@ -88,7 +97,7 @@ export default function ModelsPage() {
         if (!token) return;
         Modal.confirm({
             title: "确认删除",
-            content: "确定要删除这个模型吗?",
+            content: "确定要删除这个配置吗？",
             onOk: async () => {
                 try {
                     await deleteAdminModel(token, id);
@@ -111,11 +120,11 @@ export default function ModelsPage() {
                                 模型管理
                             </Typography.Title>
                             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                                配置图片、视频和解析模型,客户使用时输入对应的 API Key
+                                图片按分组配置请求地址、清晰度模型和支持比例；视频/解析仍按单模型配置。
                             </Typography.Text>
                         </div>
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
-                            添加模型
+                            添加配置
                         </Button>
                     </Flex>
                 </Card>
@@ -127,26 +136,35 @@ export default function ModelsPage() {
                         dataSource={models}
                         pagination={false}
                         columns={[
-                            { title: "显示名称", dataIndex: "name", width: 200, render: (value) => <Typography.Text strong>{value}</Typography.Text> },
-                            { title: "调用模型 ID", dataIndex: "modelId", width: 180, render: (value, record) => <Typography.Text code>{value || record.name}</Typography.Text> },
+                            { title: "显示名称", dataIndex: "name", width: 180, render: (value) => <Typography.Text strong>{value}</Typography.Text> },
                             {
                                 title: "类型",
                                 dataIndex: "type",
-                                width: 120,
+                                width: 110,
                                 render: (value: ModelType) => <Tag color={modelTypeColors[value]}>{modelTypeLabels[value]}</Tag>,
+                            },
+                            {
+                                title: "模型",
+                                width: 260,
+                                render: (_, record) => (record.type === "image" ? <TierModelSummary model={record} /> : <Typography.Text code>{record.modelId || record.name}</Typography.Text>),
                             },
                             { title: "API 地址", dataIndex: "apiUrl", ellipsis: true },
                             {
+                                title: "支持比例",
+                                dataIndex: "supportedSizes",
+                                width: 180,
+                                render: (value: string[] | undefined, record) => (record.type === "image" ? <Typography.Text type="secondary">{(value?.length ? value : ["auto"]).join("、")}</Typography.Text> : "-"),
+                            },
+                            {
                                 title: "状态",
                                 dataIndex: "enabled",
-                                width: 100,
+                                width: 90,
                                 render: (value: boolean) => <Tag color={value ? "success" : "default"}>{value ? "已启用" : "已停用"}</Tag>,
                             },
-                            { title: "备注", dataIndex: "remark", width: 200, ellipsis: true },
                             {
                                 title: "操作",
                                 key: "actions",
-                                width: 160,
+                                width: 150,
                                 align: "right",
                                 render: (_, record) => (
                                     <Space size={4}>
@@ -163,9 +181,9 @@ export default function ModelsPage() {
             </Flex>
 
             <Modal
-                title={editingModel ? "编辑模型" : "添加模型"}
+                title={editingModel ? "编辑配置" : "添加配置"}
                 open={isModalOpen}
-                width={640}
+                width={720}
                 onCancel={closeModal}
                 footer={
                     <Space>
@@ -177,24 +195,42 @@ export default function ModelsPage() {
                 }
             >
                 <Form form={form} layout="vertical" requiredMark={false}>
-                    <Form.Item name="name" label="显示名称" rules={[{ required: true, message: "请输入显示名称" }]} extra="前端下拉展示给用户看的名称。">
-                        <Input placeholder="例如: ChatGPT生图中转站" />
-                    </Form.Item>
-                    <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数,例如: gpt-image-2。留空时默认使用显示名称。">
-                        <Input placeholder="例如: gpt-image-2" />
-                    </Form.Item>
-                    <Form.Item name="type" label="模型类型" rules={[{ required: true }]}>
+                    <Form.Item name="type" label="配置类型" rules={[{ required: true }]}>
                         <Select
                             options={[
-                                { label: "图片模型", value: "image" },
+                                { label: "图片分组", value: "image" },
                                 { label: "视频模型", value: "video" },
                                 { label: "解析模型", value: "parse" },
                             ]}
                         />
                     </Form.Item>
-                    <Form.Item name="apiUrl" label="API 地址" rules={[{ required: true, message: "请输入 API 地址" }]} extra="OpenAI 兼容格式的接口地址,例如: https://api.example.com/v1">
+                    <Form.Item name="name" label={currentType === "image" ? "分组名称" : "显示名称"} rules={[{ required: true, message: "请输入名称" }]} extra={currentType === "image" ? "例如：ChatGPT、即梦、豆包。用户侧会按这个名称选择分组。" : "前端展示给用户看的名称。"}>
+                        <Input placeholder={currentType === "image" ? "例如：ChatGPT" : "例如：视频解析"} />
+                    </Form.Item>
+                    <Form.Item name="apiUrl" label="请求地址" rules={[{ required: true, message: "请输入请求地址" }]} extra="OpenAI 兼容格式的接口地址，例如：https://api.example.com/v1">
                         <Input placeholder="https://api.example.com/v1" />
                     </Form.Item>
+
+                    {currentType === "image" ? (
+                        <>
+                            <Typography.Text className="mb-2 block text-sm font-medium">清晰度对应模型</Typography.Text>
+                            <div className="mb-4 grid grid-cols-2 gap-3">
+                                {IMAGE_MODEL_TIERS.map((tier) => (
+                                    <Form.Item key={tier} name={["tierModels", tier]} label={IMAGE_MODEL_TIER_LABELS[tier]} className="!mb-0">
+                                        <Input placeholder={`例如：gpt-image-${tier}`} />
+                                    </Form.Item>
+                                ))}
+                            </div>
+                            <Form.Item name="supportedSizes" label="支持比例" rules={[{ required: true, message: "请选择支持比例" }]} extra="用户选择该分组后，画布里只显示这些比例。">
+                                <Select mode="multiple" options={aspectOptions} />
+                            </Form.Item>
+                        </>
+                    ) : (
+                        <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
+                            <Input placeholder="例如：video-parse" />
+                        </Form.Item>
+                    )}
+
                     <Form.Item name="enabled" label="是否启用">
                         <Select
                             options={[
@@ -204,10 +240,38 @@ export default function ModelsPage() {
                         />
                     </Form.Item>
                     <Form.Item name="remark" label="备注">
-                        <Input.TextArea rows={3} placeholder="选填,用于说明模型用途" />
+                        <Input.TextArea rows={3} placeholder="选填，用于说明用途" />
                     </Form.Item>
                 </Form>
             </Modal>
         </main>
     );
+}
+
+function TierModelSummary({ model }: { model: AdminModel }) {
+    const tierModels = model.tierModels || {};
+    const configured = IMAGE_MODEL_TIERS.filter((tier) => tierModels[tier]);
+    if (!configured.length) return <Typography.Text type="secondary">未配置清晰度模型</Typography.Text>;
+    return (
+        <Space size={4} wrap>
+            {configured.map((tier) => (
+                <Tag key={tier}>
+                    {tier}: {tierModels[tier]}
+                </Tag>
+            ))}
+        </Space>
+    );
+}
+
+function normalizeModelPayload(values: AdminModel) {
+    if (values.type !== "image") {
+        return { ...values, tierModels: {}, supportedSizes: [] };
+    }
+    const tierModels: Record<string, string> = Object.fromEntries(Object.entries(values.tierModels || {}).map(([key, value]) => [key, String(value || "").trim()]).filter(([, value]) => value));
+    return {
+        ...values,
+        modelId: "",
+        tierModels,
+        supportedSizes: values.supportedSizes?.length ? values.supportedSizes : ["auto"],
+    };
 }

@@ -6,12 +6,12 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIc
 import { App, Button, Empty, Input, Modal } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import type { NodeGenerationInput } from "./canvas-node-generation";
-import type { CanvasNodeData, CanvasNodeMetadata } from "../types";
+import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "../types";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -103,9 +103,10 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
                     className="canvas-compact-control h-10"
                     config={config}
                     value={node.metadata?.model || config.imageModel}
-                    onChange={(model) => onConfigChange(node.id, { model })}
+                    onChange={(model) => onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) })}
                     onMissingConfig={() => openConfigDialog(true)}
                     fullWidth
+                    type="image"
                 />
                 {mode === "image" ? (
                     <CanvasImageSettingsPopover config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />

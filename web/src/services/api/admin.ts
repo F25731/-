@@ -241,6 +241,8 @@ export type AdminModel = {
     modelId: string;
     type: "image" | "video" | "parse";
     apiUrl: string;
+    tierModels?: Record<string, string>;
+    supportedSizes?: string[];
     enabled: boolean;
     remark: string;
 };

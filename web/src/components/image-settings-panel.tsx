@@ -3,20 +3,12 @@
 import { type ReactNode } from "react";
 import { ConfigProvider } from "antd";
 
+import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
-import { IMAGE_KEY_TIERS, IMAGE_KEY_TIER_LABELS, type ImageKeyTier } from "@/types/api-keys";
+import { supportedImageSizes, supportedImageTiers, type AiConfig } from "@/stores/use-config-store";
+import type { ImageKeyTier } from "@/types/api-keys";
 
 export const MAX_IMAGE_GENERATION_COUNT = 8;
-
-const aspectOptions = [
-    { value: "auto", label: "未指定", description: "模型自动决定", width: 0, height: 0, icon: "auto" },
-    { value: "1:1", label: "1:1", description: "正方形", width: 1024, height: 1024, icon: "square" },
-    { value: "16:9", label: "16:9", description: "横版", width: 1792, height: 1024, icon: "landscape" },
-    { value: "4:3", label: "4:3", description: "横版", width: 1344, height: 1024, icon: "landscape" },
-    { value: "3:4", label: "3:4", description: "竖版", width: 1024, height: 1344, icon: "portrait" },
-    { value: "9:16", label: "9:16", description: "竖版", width: 1024, height: 1792, icon: "portrait" },
-];
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
@@ -33,8 +25,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const normalizedQuickCount = Math.max(1, Math.min(normalizedMaxCount, quickCount));
     const count = Math.max(1, Math.min(normalizedMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
-    const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
-    const activeTier = config.imageTier || "1k";
+    const imageModel = config.model || config.imageModel;
+    const tierOptions = supportedImageTiers(config, imageModel);
+    const aspectOptions = IMAGE_ASPECT_OPTIONS.filter((item) => supportedImageSizes(config, imageModel).includes(item.value));
+    const selectedAspect = aspectOptions.find((item) => item.value === activeSize) || aspectOptions[0];
+    const activeTier = tierOptions.includes(config.imageTier) ? config.imageTier : tierOptions[0] || "1k";
     const selectAspect = (value: string) => {
         const option = aspectOptions.find((item) => item.value === value);
         onConfigChange("size", option?.value || "auto");
@@ -51,9 +46,9 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生图档位</SettingTitle>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {IMAGE_KEY_TIERS.map((tier) => (
+                        {tierOptions.map((tier) => (
                             <OptionPill key={tier} selected={activeTier === tier} theme={theme} onClick={() => onConfigChange("imageTier", tier)}>
-                                {IMAGE_KEY_TIER_LABELS[tier]}
+                                {IMAGE_MODEL_TIER_LABELS[tier as keyof typeof IMAGE_MODEL_TIER_LABELS] || tier}
                             </OptionPill>
                         ))}
                     </div>
@@ -113,11 +108,11 @@ export function imageQualityLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => item.value === size)?.label || size || "未指定";
+    return IMAGE_ASPECT_OPTIONS.find((item) => item.value === size)?.label || size || "未指定";
 }
 
 export function imageTierLabel(tier: string | undefined) {
-    return IMAGE_KEY_TIER_LABELS[(tier || "1k") as ImageKeyTier] || "1k";
+    return IMAGE_MODEL_TIER_LABELS[(tier || "1k") as ImageKeyTier] || "1k";
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

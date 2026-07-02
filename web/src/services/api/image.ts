@@ -1,5 +1,6 @@
 ﻿import axios from "axios";
 
+import { DEFAULT_IMAGE_ASPECT_VALUES } from "@/constant/image-model-options";
 import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
@@ -43,7 +44,7 @@ const QUALITY_BASE: Record<string, number> = {
     hd: 2048,
 };
 const MAX_IMAGE_GENERATION_COUNT = 8;
-const ALLOWED_REQUEST_SIZES = new Set(["1:1", "16:9", "4:3", "3:4", "9:16"]);
+const ALLOWED_REQUEST_SIZES = new Set(DEFAULT_IMAGE_ASPECT_VALUES);
 const IMAGE_JOB_CREATE_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 2_500;

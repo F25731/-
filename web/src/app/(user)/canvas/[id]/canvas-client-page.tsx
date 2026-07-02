@@ -8,7 +8,7 @@ import { saveAs } from "file-saver";
 
 import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestVideoGeneration } from "@/services/api/video";
-import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -2914,12 +2914,13 @@ function getInputSummary(inputs: NodeGenerationInput[]) {
 
 function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : config.textModel;
+    const model = node?.metadata?.model || defaultModel || config.model || defaultConfig.model;
     return {
         ...config,
-        model: node?.metadata?.model || defaultModel || config.model || defaultConfig.model,
+        model,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        imageTier: node?.metadata?.imageTier || config.imageTier || defaultConfig.imageTier,
-        size: node?.metadata?.size || config.size || defaultConfig.size,
+        imageTier: mode === "image" ? normalizeImageTierForModel(config, model, node?.metadata?.imageTier || config.imageTier || defaultConfig.imageTier) : node?.metadata?.imageTier || config.imageTier || defaultConfig.imageTier,
+        size: mode === "image" ? normalizeImageSizeForModel(config, model, node?.metadata?.size || config.size || defaultConfig.size) : node?.metadata?.size || config.size || defaultConfig.size,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         count: String(node?.metadata?.count || config.count || defaultConfig.count),

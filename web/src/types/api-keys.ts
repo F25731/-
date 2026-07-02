@@ -1,4 +1,6 @@
-export const IMAGE_KEY_TIERS = ["1k", "2k", "4k"] as const;
+import { IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
+
+export const IMAGE_KEY_TIERS = IMAGE_MODEL_TIERS;
 
 export type ImageKeyTier = (typeof IMAGE_KEY_TIERS)[number];
 
@@ -28,9 +30,7 @@ export type ImageTokenUsage = {
 export type ImageTokenUsages = Partial<Record<ImageKeyTier, ImageTokenUsage>>;
 
 export const IMAGE_KEY_TIER_LABELS: Record<ImageKeyTier, string> = {
-    "1k": "1k",
-    "2k": "2k",
-    "4k": "4k",
+    ...IMAGE_MODEL_TIER_LABELS,
 };
 
 export function normalizeImageApiKeys(keys: Partial<Record<ImageKeyTier, string>> | undefined): ImageApiKeys {

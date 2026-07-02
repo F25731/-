@@ -5,7 +5,7 @@ import { ArrowUp, LoaderCircle } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -98,8 +98,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             <ModelPicker
                                 config={config}
                                 value={node.metadata?.model || config.imageModel}
-                                onChange={(model) => onConfigChange(node.id, { model })}
+                                onChange={(model) => onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) })}
                                 onMissingConfig={() => openConfigDialog(true)}
+                                type="image"
                             />
                             <CanvasImageSettingsPopover
                                 config={config}
@@ -116,6 +117,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             value={node.metadata?.model || config.videoModel}
                             onChange={(model) => onConfigChange(node.id, { model })}
                             onMissingConfig={() => openConfigDialog(true)}
+                            type="video"
                         />
                     ) : (
                         <ModelPicker

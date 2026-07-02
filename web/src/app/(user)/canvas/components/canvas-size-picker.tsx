@@ -3,17 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Select } from "antd";
 
+import { IMAGE_ASPECT_OPTIONS } from "@/constant/image-model-options";
 import { cn } from "@/lib/utils";
 
-const sizeOptions = ["auto", "1:1", "16:9", "4:3", "3:4", "9:16"];
-const sizeLabels: Record<string, string> = {
-    auto: "未指定",
-    "1:1": "1:1 正方形",
-    "16:9": "16:9 横版",
-    "4:3": "4:3 横版",
-    "3:4": "3:4 竖版",
-    "9:16": "9:16 竖版",
-};
+const sizeOptions = IMAGE_ASPECT_OPTIONS.map((item) => item.value);
+const sizeLabels: Record<string, string> = Object.fromEntries(IMAGE_ASPECT_OPTIONS.map((item) => [item.value, `${item.label} ${item.description}`]));
 
 type CanvasSizePickerProps = {
     value: string;
@@ -25,7 +19,7 @@ export function CanvasSizePicker({ value, className, onChange }: CanvasSizePicke
     const rootRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
-    const extraOptions = [value, search.trim()].filter((item) => item && !sizeOptions.includes(item));
+    const extraOptions = [value, search.trim()].filter((item) => item && !sizeOptions.includes(item as (typeof sizeOptions)[number]));
     const options = [...sizeOptions, ...Array.from(new Set(extraOptions))].map((size) => ({ value: size, label: sizeLabels[size] || size }));
     const selectSize = (next: string) => {
         onChange(next.trim());
