@@ -17,6 +17,19 @@ func Models(w http.ResponseWriter, r *http.Request) {
 	OK(w, result)
 }
 
+func PromptExtract(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Image string `json:"image"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	result, err := service.ExtractPromptFromImage(payload.Image)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func AdminModels(w http.ResponseWriter, r *http.Request) {
 	result, err := service.AdminModels()
 	if err != nil {

@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { apiPost } from "@/services/api/request";
 import { normalizeImageApiKeys, normalizeImageKeyTier } from "@/types/api-keys";
 import type { ReferenceImage } from "@/types/image";
 
@@ -386,6 +387,12 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
         throw normalizeAiError(error, "请求失败");
     }
     return answer || "没有返回内容";
+}
+
+export async function requestPromptExtraction(image: ReferenceImage) {
+    const imageUrl = await imageToDataUrl(image);
+    if (!imageUrl) throw new Error("请先上传图片");
+    return apiPost<string>("/api/prompt/extract", { image: imageUrl });
 }
 
 export async function fetchImageModels(config: AiConfig) {

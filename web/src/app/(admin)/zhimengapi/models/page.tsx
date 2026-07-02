@@ -1,25 +1,27 @@
 "use client";
 
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from "@ant-design/icons";
-import { App, Button, Card, Flex, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
 import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
-type ModelType = "image" | "video" | "parse";
+type ModelType = "image" | "video" | "parse" | "prompt";
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片分组",
     video: "视频模型",
     parse: "解析模型",
+    prompt: "提示词模型",
 };
 
 const modelTypeColors: Record<ModelType, string> = {
     image: "blue",
     video: "purple",
     parse: "green",
+    prompt: "orange",
 };
 
 const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
@@ -55,10 +57,10 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue({ ...model, tierModels: model.tierModels || {}, supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"] });
+            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4 });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image", tierModels: {}, supportedSizes: ["auto", "1:1"] });
+            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, supportedSizes: ["auto", "1:1"], referenceLimit: 4 });
         }
     };
 
@@ -120,7 +122,7 @@ export default function ModelsPage() {
                                 模型管理
                             </Typography.Title>
                             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                                图片按分组配置请求地址、清晰度模型和支持比例；视频/解析仍按单模型配置。
+                                图片按分组配置请求地址、清晰度模型、支持比例和参考图数量；视频/解析/提示词仍按单模型配置。
                             </Typography.Text>
                         </div>
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
@@ -149,6 +151,12 @@ export default function ModelsPage() {
                                 render: (_, record) => (record.type === "image" ? <TierModelSummary model={record} /> : <Typography.Text code>{record.modelId || record.name}</Typography.Text>),
                             },
                             { title: "API 地址", dataIndex: "apiUrl", ellipsis: true },
+                            {
+                                title: "参考图",
+                                dataIndex: "referenceLimit",
+                                width: 90,
+                                render: (value: number | undefined, record) => (record.type === "image" ? `${value || 4} 张` : "-"),
+                            },
                             {
                                 title: "支持比例",
                                 dataIndex: "supportedSizes",
@@ -201,6 +209,7 @@ export default function ModelsPage() {
                                 { label: "图片分组", value: "image" },
                                 { label: "视频模型", value: "video" },
                                 { label: "解析模型", value: "parse" },
+                                { label: "提示词模型", value: "prompt" },
                             ]}
                         />
                     </Form.Item>
@@ -224,11 +233,26 @@ export default function ModelsPage() {
                             <Form.Item name="supportedSizes" label="支持比例" rules={[{ required: true, message: "请选择支持比例" }]} extra="用户选择该分组后，画布里只显示这些比例。">
                                 <Select mode="multiple" options={aspectOptions} />
                             </Form.Item>
+                            <Form.Item name="referenceLimit" label="参考图数量" rules={[{ required: true, message: "请输入参考图数量" }]} extra="用户在画布里上传或粘贴参考图时，不能超过这个数量。">
+                                <InputNumber min={1} max={20} precision={0} className="!w-full" placeholder="例如：4" />
+                            </Form.Item>
                         </>
                     ) : (
-                        <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
-                            <Input placeholder="例如：video-parse" />
-                        </Form.Item>
+                        <>
+                            <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
+                                <Input placeholder={currentType === "prompt" ? "例如：gpt-5.5" : "例如：video-parse"} />
+                            </Form.Item>
+                            {currentType === "prompt" ? (
+                                <Form.Item
+                                    name="apiKey"
+                                    label="后台专用 API Key"
+                                    rules={editingModel?.hasApiKey ? [] : [{ required: true, message: "请输入后台专用 API Key" }]}
+                                    extra={editingModel?.hasApiKey ? "已保存密钥；留空表示继续使用原密钥。" : "用户无需填写，提示词工作台会免费使用这个密钥。"}
+                                >
+                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "sk-..."} />
+                                </Form.Item>
+                            ) : null}
+                        </>
                     )}
 
                     <Form.Item name="enabled" label="是否启用">
@@ -265,13 +289,15 @@ function TierModelSummary({ model }: { model: AdminModel }) {
 
 function normalizeModelPayload(values: AdminModel) {
     if (values.type !== "image") {
-        return { ...values, tierModels: {}, supportedSizes: [] };
+        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, supportedSizes: [], referenceLimit: 4 };
     }
     const tierModels: Record<string, string> = Object.fromEntries(Object.entries(values.tierModels || {}).map(([key, value]) => [key, String(value || "").trim()]).filter(([, value]) => value));
     return {
         ...values,
         modelId: "",
+        apiKey: "",
         tierModels,
         supportedSizes: values.supportedSizes?.length ? values.supportedSizes : ["auto"],
+        referenceLimit: Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))),
     };
 }

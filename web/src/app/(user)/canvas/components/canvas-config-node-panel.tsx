@@ -30,6 +30,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
     const [editingText, setEditingText] = useState("");
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = "image";
     const config = buildNodeConfig(globalConfig, node, mode);
@@ -62,6 +63,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
         setEditingText("");
         setEditingTextId(null);
         message.success("已保存文本提示词");
+    };
+    const selectImageModel = (model: string) => {
+        updateConfig("imageModel", model);
+        updateConfig("model", model);
+        onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) });
     };
 
     return (
@@ -103,7 +109,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
                     className="canvas-compact-control h-10"
                     config={config}
                     value={node.metadata?.model || config.imageModel}
-                    onChange={(model) => onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) })}
+                    onChange={selectImageModel}
                     onMissingConfig={() => openConfigDialog(true)}
                     fullWidth
                     type="image"

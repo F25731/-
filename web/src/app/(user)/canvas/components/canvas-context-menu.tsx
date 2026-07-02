@@ -2,13 +2,13 @@
 
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ContextMenuState } from "../types";
 
-export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete }: { menu: ContextMenuState; onClose: () => void; onDuplicate: () => void; onDelete: () => void }) {
+export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete, onCopyImage, canCopyImage = false }: { menu: ContextMenuState; onClose: () => void; onDuplicate: () => void; onDelete: () => void; onCopyImage?: () => void; canCopyImage?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     useEffect(() => {
@@ -27,8 +27,9 @@ export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete }: 
             style={{ left: menu.x, top: menu.y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            <MenuButton icon={<Plus className="size-4" />} label="Duplicate" onClick={onDuplicate} />
-            <MenuButton icon={<Trash2 className="size-4" />} label="Delete" onClick={onDelete} danger />
+            {canCopyImage ? <MenuButton icon={<Copy className="size-4" />} label="复制图片" onClick={onCopyImage} /> : null}
+            <MenuButton icon={<Plus className="size-4" />} label="复制节点" onClick={onDuplicate} />
+            <MenuButton icon={<Trash2 className="size-4" />} label="删除" onClick={onDelete} danger />
         </div>
     );
 }

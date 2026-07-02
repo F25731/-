@@ -19,10 +19,11 @@ export type StoredUserModel = {
     id: string;
     name: string;
     modelId?: string;
-    type: "image" | "video" | "parse";
+    type: "image" | "video" | "parse" | "prompt";
     apiUrl: string;
     tierModels?: Record<string, string>;
     supportedSizes?: string[];
+    referenceLimit?: number;
     enabled: boolean;
 };
 
@@ -41,6 +42,7 @@ export type AiConfig = {
     imageModel: string;
     videoModel: string;
     parseModel: string;
+    promptModel: string;
     textModel: string;
     videoSeconds: string;
     vquality: string;
@@ -49,9 +51,10 @@ export type AiConfig = {
     quality: string;
     size: string;
     count: string;
-    modelTypes: Record<string, "image" | "video" | "parse">;
+    modelTypes: Record<string, "image" | "video" | "parse" | "prompt">;
     modelSupportedSizes: Record<string, string[]>;
     modelTierOptions: Record<string, string[]>;
+    modelReferenceLimits: Record<string, number>;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -65,6 +68,7 @@ export const defaultConfig: AiConfig = {
     imageModel: "",
     videoModel: "",
     parseModel: "",
+    promptModel: "",
     textModel: "",
     videoSeconds: "6",
     vquality: "720",
@@ -76,6 +80,7 @@ export const defaultConfig: AiConfig = {
     modelTypes: {},
     modelSupportedSizes: {},
     modelTierOptions: {},
+    modelReferenceLimits: {},
 };
 
 type ConfigStore = {
@@ -99,16 +104,19 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         const imageModels = configuredModels.filter((model) => model.type === "image").map((model) => model.name);
         const videoModels = configuredModels.filter((model) => model.type === "video").map((model) => model.name);
         const parseModels = configuredModels.filter((model) => model.type === "parse").map((model) => model.name);
+        const promptModels = configuredModels.filter((model) => model.type === "prompt").map((model) => model.name);
         const models = configuredModels.map((model) => model.name);
         const modelTypes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type]));
         const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
         const modelTierOptions = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]) : []]));
+        const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, normalizeReferenceLimit(model.referenceLimit)]));
         const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "";
         const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
         const parseModel = parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
-        const model = models.includes(config.model) ? config.model : imageModel || videoModel || parseModel || "";
+        const promptModel = promptModels.includes(config.promptModel) ? config.promptModel : promptModels[0] || "";
+        const model = models.includes(config.model) ? config.model : imageModel || videoModel || parseModel || promptModel || "";
         const size = normalizeModelSize(config.size, modelSupportedSizes[imageModel || model]);
-        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel, imageTier: config.imageTier, size });
+        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel, promptModel, imageTier: config.imageTier, size });
         return {
             ...config,
             channelMode: "local",
@@ -118,12 +126,14 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             imageModel,
             videoModel,
             parseModel,
+            promptModel,
             textModel: models.includes(config.textModel) ? config.textModel : model,
             size,
             models,
             modelTypes,
             modelSupportedSizes,
             modelTierOptions,
+            modelReferenceLimits,
         };
     }
 
@@ -137,10 +147,12 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             imageModel: config.imageModel || FIXED_IMAGE_MODEL,
             videoModel: config.videoModel || FIXED_IMAGE_MODEL,
             parseModel: config.parseModel || "",
+            promptModel: config.promptModel || "",
             textModel: config.textModel || FIXED_IMAGE_MODEL,
             models: config.models.length > 0 ? config.models : [FIXED_IMAGE_MODEL],
             modelSupportedSizes: config.modelSupportedSizes || {},
             modelTierOptions: config.modelTierOptions || {},
+            modelReferenceLimits: config.modelReferenceLimits || {},
         };
     }
 
@@ -155,10 +167,12 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             imageModel: FIXED_IMAGE_MODEL,
             videoModel: FIXED_IMAGE_MODEL,
             parseModel: "",
+            promptModel: "",
             textModel: FIXED_IMAGE_MODEL,
             models: [FIXED_IMAGE_MODEL],
             modelSupportedSizes: {},
             modelTierOptions: {},
+            modelReferenceLimits: {},
         };
     }
 
@@ -170,10 +184,12 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         imageModel: config.imageModel || modelChannel.defaultImageModel || "",
         videoModel: config.videoModel || modelChannel.defaultVideoModel || "",
         parseModel: config.parseModel || "",
+        promptModel: config.promptModel || "",
         textModel: config.textModel || modelChannel.defaultTextModel || "",
         systemPrompt: config.systemPrompt || modelChannel.systemPrompt || "",
         modelSupportedSizes: config.modelSupportedSizes || {},
         modelTierOptions: config.modelTierOptions || {},
+        modelReferenceLimits: config.modelReferenceLimits || {},
     };
 }
 
@@ -208,14 +224,14 @@ export function readUserModelConfig() {
     try {
         const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
         const selectedIds = new Set(parsed.modelIds || []);
-        const models = (parsed.models || []).filter((model) => model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
+        const models = (parsed.models || []).filter((model) => model.type !== "prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
         return { models, apiKeys: parsed.apiKeys || {} };
     } catch {
         return { models: [], apiKeys: {} as Record<string, string> };
     }
 }
 
-export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel || config.parseModel) {
+export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel || config.parseModel || config.promptModel) {
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
@@ -262,7 +278,7 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            version: 4,
+            version: 5,
             partialize: (state) => ({ config: state.config }),
             migrate: (persisted) => {
                 const state = persisted as Partial<ConfigStore>;
@@ -294,9 +310,11 @@ export const useConfigStore = create<ConfigStore>()(
                         videoSeconds: config.videoSeconds || "6",
                         vquality: config.vquality || "720",
                         parseModel: config.parseModel || "",
+                        promptModel: config.promptModel || "",
                         modelTypes: config.modelTypes || {},
                         modelSupportedSizes: config.modelSupportedSizes || {},
                         modelTierOptions: config.modelTierOptions || {},
+                        modelReferenceLimits: config.modelReferenceLimits || {},
                     },
                 };
             },
@@ -315,8 +333,8 @@ export function useEffectiveConfig() {
             return resolveModelRuntimeConfig(effectiveConfig).apiKey || readAuthToken(config.imageTier);
         }
         // remote 模式下使用当前选中模型的密钥
-        return readModelApiKey(effectiveConfig.model || effectiveConfig.imageModel || effectiveConfig.parseModel || "");
-    }, [effectiveConfig.channelMode, effectiveConfig.model, effectiveConfig.imageModel, effectiveConfig.parseModel, config.imageTier]);
+        return readModelApiKey(effectiveConfig.model || effectiveConfig.imageModel || effectiveConfig.parseModel || effectiveConfig.promptModel || "");
+    }, [effectiveConfig.channelMode, effectiveConfig.model, effectiveConfig.imageModel, effectiveConfig.parseModel, effectiveConfig.promptModel, config.imageTier]);
 
     return useMemo(() => ({ ...effectiveConfig, apiKey: authToken }), [authToken, effectiveConfig]);
 }
@@ -348,6 +366,15 @@ export function normalizeImageSizeForModel(config: AiConfig, modelName: string, 
 export function normalizeImageTierForModel(config: AiConfig, modelName: string, tier: string) {
     const tiers = supportedImageTiers(config, modelName);
     return tiers.includes(tier) ? tier : tiers[0] || "1k";
+}
+
+export function imageReferenceLimit(config: AiConfig, modelName = config.model || config.imageModel) {
+    return normalizeReferenceLimit(config.modelReferenceLimits[modelName]);
+}
+
+function normalizeReferenceLimit(value: number | undefined) {
+    const next = Math.floor(Math.abs(Number(value)) || 4);
+    return Math.max(1, Math.min(20, next));
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {

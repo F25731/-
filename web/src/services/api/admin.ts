@@ -239,10 +239,13 @@ export type AdminModel = {
     id: string;
     name: string;
     modelId: string;
-    type: "image" | "video" | "parse";
+    type: "image" | "video" | "parse" | "prompt";
     apiUrl: string;
+    apiKey?: string;
+    hasApiKey?: boolean;
     tierModels?: Record<string, string>;
     supportedSizes?: string[];
+    referenceLimit?: number;
     enabled: boolean;
     remark: string;
 };

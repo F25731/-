@@ -34,6 +34,9 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 		return item, err
 	} else if ok && item.CreatedAt == "" {
 		item.CreatedAt = saved.CreatedAt
+		if item.APIKey == "" {
+			item.APIKey = saved.APIKey
+		}
 	}
 	return item, db.Save(&item).Error
 }

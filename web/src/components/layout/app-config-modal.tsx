@@ -12,12 +12,14 @@ const modelTypeLabels: Record<AdminModel["type"], string> = {
     image: "图片分组",
     video: "视频模型",
     parse: "解析模型",
+    prompt: "提示词模型",
 };
 
 const modelTypeColors: Record<AdminModel["type"], string> = {
     image: "blue",
     video: "purple",
     parse: "green",
+    prompt: "orange",
 };
 
 export function AppConfigModal() {
@@ -40,7 +42,7 @@ export function AppConfigModal() {
     const loadModels = async () => {
         try {
             const data = await fetchPublicModels();
-            setModels(data.filter((model) => model.enabled));
+            setModels(data.filter((model) => model.enabled && model.type !== "prompt"));
         } catch {
             message.error("加载模型列表失败");
         }
@@ -75,10 +77,12 @@ export function AppConfigModal() {
             const imageModel = configuredModels.find((model) => model.type === "image");
             const videoModel = configuredModels.find((model) => model.type === "video");
             const parseModel = configuredModels.find((model) => model.type === "parse");
+            const promptModel = configuredModels.find((model) => model.type === "prompt");
             updateConfig("model", imageModel?.name || "");
             updateConfig("imageModel", imageModel?.name || "");
             updateConfig("videoModel", videoModel?.name || "");
             updateConfig("parseModel", parseModel?.name || "");
+            updateConfig("promptModel", promptModel?.name || "");
             updateConfig("baseUrl", imageModel?.apiUrl || "");
             updateConfig("apiKey", imageModel ? cleanedApiKeys[imageModel.id] || "" : "");
 
@@ -174,6 +178,7 @@ function ImageGroupMeta({ model }: { model: AdminModel }) {
                     {tier}
                 </Tag>
             ))}
+            <Tag color="purple">参考图 {model.referenceLimit || 4} 张</Tag>
         </div>
     );
 }

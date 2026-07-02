@@ -1,4 +1,4 @@
-import { Maximize2, Search, Video } from "lucide-react";
+import { Maximize2, MessageSquareText, Search, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -15,6 +15,11 @@ export const navigationTools = [
         slug: "parse",
         label: "解析工作台",
         icon: Search,
+    },
+    {
+        slug: "prompt",
+        label: "提示词工作台",
+        icon: MessageSquareText,
     },
 ] as const;
 

@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle } from "lucide-react";
+import { ArrowUp, LoaderCircle, Plus } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -20,12 +20,15 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onUploadReference?: (nodeId: string) => void;
+    onPasteReference?: (nodeId: string, files: File[]) => void;
     onImageSettingsOpenChange?: (open: boolean) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onUploadReference, onPasteReference, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = defaultMode(node.type);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
@@ -51,6 +54,21 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         onGenerate(node.id, mode, text);
         setPrompt("");
         onPromptChange(node.id, "");
+    };
+    const selectModel = (model: string) => {
+        if (mode === "image") {
+            updateConfig("imageModel", model);
+            updateConfig("model", model);
+            onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) });
+            return;
+        }
+        if (mode === "video") {
+            updateConfig("videoModel", model);
+            onConfigChange(node.id, { model });
+            return;
+        }
+        updateConfig("textModel", model);
+        onConfigChange(node.id, { model });
     };
 
     if (isNodeGenerating) {
@@ -78,6 +96,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         >
             <textarea
                 value={prompt}
+                onPaste={(event) => {
+                    if (mode !== "image") return;
+                    const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+                    if (!imageFiles.length) return;
+                    event.preventDefault();
+                    onPasteReference?.(node.id, imageFiles);
+                }}
                 onChange={(event) => updatePrompt(event.target.value)}
                 onKeyDown={(event) => {
                     if (isDisabled || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -98,7 +123,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             <ModelPicker
                                 config={config}
                                 value={node.metadata?.model || config.imageModel}
-                                onChange={(model) => onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) })}
+                                onChange={selectModel}
                                 onMissingConfig={() => openConfigDialog(true)}
                                 type="image"
                             />
@@ -110,12 +135,20 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
+                            <Button
+                                type="default"
+                                className="!h-10 !min-w-10 !rounded-full !px-3"
+                                icon={<Plus className="size-4" />}
+                                onClick={() => onUploadReference?.(node.id)}
+                                title="上传参考图"
+                                aria-label="上传参考图"
+                            />
                         </>
                     ) : mode === "video" ? (
                         <ModelPicker
                             config={config}
                             value={node.metadata?.model || config.videoModel}
-                            onChange={(model) => onConfigChange(node.id, { model })}
+                            onChange={selectModel}
                             onMissingConfig={() => openConfigDialog(true)}
                             type="video"
                         />
@@ -123,7 +156,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <ModelPicker
                             config={config}
                             value={node.metadata?.model || config.textModel}
-                            onChange={(model) => onConfigChange(node.id, { model })}
+                            onChange={selectModel}
                             onMissingConfig={() => openConfigDialog(true)}
                         />
                     )}

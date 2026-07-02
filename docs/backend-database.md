@@ -87,17 +87,19 @@
 
 ### admin_models
 
-后台模型配置表。用于保存前端 API Key 配置弹窗可选择的图片分组、视频模型和解析模型。
+后台模型配置表。用于保存前端 API Key 配置弹窗可选择的图片分组、视频模型、解析模型，以及后端免费调用的提示词模型。
 
 | 字段           | 类型     | 说明                     |
 |--------------|--------|------------------------|
 | `id`         | string | 主键                     |
 | `name`       | string | 前端展示名称                 |
-| `model_id`   | string | 视频/解析实际请求上游接口的模型 ID，留空时使用展示名称 |
-| `type`       | string | 模型类型：`image`、`video`、`parse` |
+| `model_id`   | string | 视频/解析/提示词实际请求上游接口的模型 ID，留空时使用展示名称 |
+| `type`       | string | 模型类型：`image`、`video`、`parse`、`prompt` |
 | `api_url`    | string | OpenAI 兼容接口地址         |
+| `api_key`    | string | 后台专用密钥；目前仅提示词模型使用，不会返回给用户侧 |
 | `tier_models` | json | 图片分组各清晰度对应的实际模型 ID，例如 `512`、`1k`、`2k`、`4k` |
 | `supported_sizes` | json | 图片分组支持的画布比例，例如 `auto`、`1:1`、`16:9`、`9:16` |
+| `reference_limit` | number | 图片分组允许上传或粘贴的参考图数量 |
 | `enabled`    | bool   | 是否启用                   |
 | `remark`     | string | 备注                     |
 | `created_at` | string | 创建时间                   |

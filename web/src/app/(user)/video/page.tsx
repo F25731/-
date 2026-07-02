@@ -2,10 +2,10 @@
 
 import { CloudUploadOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { App, Button, Card, Input, Radio, Select, Space, Typography, Upload } from "antd";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Video } from "lucide-react";
 
-import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 
 type AspectRatio = "16:9" | "9:16" | "1:1";
 type Duration = 4 | 6 | 8 | 10 | 12 | 15;
@@ -13,14 +13,25 @@ type Duration = 4 | 6 | 8 | 10 | 12 | 15;
 export default function VideoPage() {
     const { message } = App.useApp();
     const config = useEffectiveConfig();
-    const [selectedModel, setSelectedModel] = useState<string>("");
+    const updateConfig = useConfigStore((state) => state.updateConfig);
+    const [selectedModel, setSelectedModel] = useState<string>(config.videoModel);
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
     const [duration, setDuration] = useState<Duration>(4);
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
     const [videoUrl, setVideoUrl] = useState("");
 
-    const videoModels = config.models.filter((model) => config.modelTypes[model] === "video");
+    const videoModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "video"), [config.modelTypes, config.models]);
+
+    useEffect(() => {
+        if (selectedModel && videoModels.includes(selectedModel)) return;
+        setSelectedModel(config.videoModel && videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "");
+    }, [config.videoModel, selectedModel, videoModels]);
+
+    const handleModelChange = (model: string) => {
+        setSelectedModel(model);
+        updateConfig("videoModel", model);
+    };
 
     const handleGenerate = async () => {
         if (!selectedModel) {
@@ -66,7 +77,7 @@ export default function VideoPage() {
                                     <Select
                                         size="large"
                                         value={selectedModel}
-                                        onChange={setSelectedModel}
+                                        onChange={handleModelChange}
                                         placeholder="选择模型"
                                         className="w-full"
                                         options={videoModels.map((m) => ({ label: m, value: m }))}

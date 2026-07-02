@@ -22,6 +22,7 @@ func New() *gin.Engine {
 	api.GET("/auth/me", middleware.OptionalAuth, gin.WrapF(handler.CurrentUser))
 	api.GET("/settings", gin.WrapF(handler.Settings))
 	api.GET("/models", gin.WrapF(handler.Models))
+	api.POST("/prompt/extract", gin.WrapF(handler.PromptExtract))
 	v1 := api.Group("/v1", middleware.UserAuth)
 	v1.POST("/images/generations", gin.WrapF(handler.AIImagesGenerations))
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))

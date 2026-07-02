@@ -8,7 +8,7 @@ import { saveAs } from "file-saver";
 
 import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestVideoGeneration } from "@/services/api/video";
-import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -753,6 +753,25 @@ function InfiniteCanvasPage() {
         setDialogNodeId(id);
     }, []);
 
+    const copyImageNodeToClipboard = useCallback(
+        async (nodeId: string) => {
+            const node = nodesRef.current.find((item) => item.id === nodeId);
+            if (node?.type !== CanvasNodeType.Image || !node.metadata?.content) return;
+            if (!navigator.clipboard || !("ClipboardItem" in window)) {
+                message.warning("当前浏览器不支持直接复制图片");
+                return;
+            }
+            try {
+                const blob = await imageUrlToPngBlob(node.metadata.content);
+                await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+                message.success("图片已复制");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "复制图片失败");
+            }
+        },
+        [message],
+    );
+
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
@@ -1233,6 +1252,110 @@ function InfiniteCanvasPage() {
         setDialogNodeId(configNode?.id || ids[0] || null);
     }, [effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size]);
 
+    const currentReferenceLimit = useCallback(
+        (node: CanvasNodeData | undefined) => {
+            const model = node?.metadata?.model || effectiveConfig.imageModel || effectiveConfig.model;
+            return imageReferenceLimit(effectiveConfig, model);
+        },
+        [effectiveConfig],
+    );
+
+    const referenceImageCount = useCallback((nodeId: string) => {
+        const sourceIds = new Set(connectionsRef.current.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId));
+        return nodesRef.current.filter((node) => sourceIds.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content)).length;
+    }, []);
+
+    const addReferenceImagesToNode = useCallback(
+        async (nodeId: string, imageFiles: File[]) => {
+            const targetNode = nodesRef.current.find((node) => node.id === nodeId);
+            if (!targetNode) return false;
+            const limit = currentReferenceLimit(targetNode);
+            const currentCount = referenceImageCount(nodeId);
+            const allowedCount = Math.max(0, limit - currentCount);
+            if (allowedCount <= 0) {
+                message.warning(`当前模型最多支持 ${limit} 张参考图`);
+                return false;
+            }
+            const acceptedFiles = imageFiles.slice(0, allowedCount);
+            if (acceptedFiles.length < imageFiles.length) message.warning(`已按当前模型限制保留前 ${acceptedFiles.length} 张参考图`);
+
+            const batchRootId = targetNode.metadata?.batchRootId;
+            const targetPosition = targetNode.position || getCanvasCenter();
+            const referenceNodes = await Promise.all(
+                acceptedFiles.map(async (item, index) => {
+                    const image = await uploadImage(item);
+                    const nodeSize = fitNodeSize(image.width, image.height);
+                    return {
+                        id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                        type: CanvasNodeType.Image,
+                        title: item.name || `参考图 ${currentCount + index + 1}`,
+                        position: {
+                            x: targetPosition.x - nodeSize.width - 120,
+                            y: targetPosition.y + (currentCount + index) * (nodeSize.height + 36),
+                        },
+                        width: nodeSize.width,
+                        height: nodeSize.height,
+                        metadata: { ...imageMetadata(image), prompt: "参考图" },
+                    } satisfies CanvasNodeData;
+                }),
+            );
+            const referenceIds = referenceNodes.map((node) => node.id);
+            setNodes((prev) => [
+                ...prev.map((node) => {
+                    if (node.id === nodeId) {
+                        return {
+                            ...node,
+                            metadata: {
+                                ...node.metadata,
+                                status: node.metadata?.content ? NODE_STATUS_SUCCESS : node.metadata?.status,
+                                errorDetails: undefined,
+                                count: 1,
+                                batchRootId: undefined,
+                                inputOrder: [...(node.metadata?.inputOrder || []).filter((id) => !referenceIds.includes(id)), ...referenceIds],
+                            },
+                        };
+                    }
+
+                    if (batchRootId && node.id === batchRootId && node.metadata?.isBatchRoot) {
+                        const childIds = (node.metadata.batchChildIds || []).filter((id) => id !== nodeId);
+                        const nextPrimaryId = node.metadata.primaryImageId === nodeId ? childIds[0] || batchRootId : node.metadata.primaryImageId;
+                        const nextPrimaryNode = prev.find((item) => item.id === nextPrimaryId);
+
+                        return {
+                            ...node,
+                            metadata: {
+                                ...node.metadata,
+                                isBatchRoot: childIds.length ? node.metadata.isBatchRoot : undefined,
+                                batchChildIds: childIds.length ? childIds : undefined,
+                                batchUsesReferenceImages: childIds.length ? node.metadata.batchUsesReferenceImages : undefined,
+                                primaryImageId: childIds.length ? nextPrimaryId : undefined,
+                                imageBatchExpanded: childIds.length ? node.metadata.imageBatchExpanded : undefined,
+                                count: childIds.length + 1,
+                                content: nextPrimaryNode?.metadata?.content || node.metadata.content,
+                                naturalWidth: nextPrimaryNode?.metadata?.naturalWidth || node.metadata.naturalWidth,
+                                naturalHeight: nextPrimaryNode?.metadata?.naturalHeight || node.metadata.naturalHeight,
+                                freeResize: nextPrimaryNode?.metadata?.freeResize ?? node.metadata.freeResize,
+                            },
+                        };
+                    }
+
+                    return node;
+                }),
+                ...referenceNodes,
+            ]);
+            setConnections((prev) => [
+                ...prev.filter((connection) => !(batchRootId && connection.fromNodeId === batchRootId && connection.toNodeId === nodeId)),
+                ...referenceIds.map((id) => ({ id: nanoid(), fromNodeId: id, toNodeId: nodeId })),
+            ]);
+            setSelectedNodeIds(new Set([nodeId]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(nodeId);
+            message.success(`已添加 ${referenceNodes.length} 张参考图`);
+            return true;
+        },
+        [currentReferenceLimit, getCanvasCenter, message, referenceImageCount],
+    );
+
     const createTextNodeFromClipboard = useCallback(
         (text: string) => {
             const trimmed = text.trim();
@@ -1271,6 +1394,13 @@ function InfiniteCanvasPage() {
         const text = await navigator.clipboard.readText();
         if (createTextNodeFromClipboard(text)) message.success("已粘贴文本到画布");
     }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message]);
+
+    const pasteReferenceImages = useCallback(
+        (nodeId: string, files: File[]) => {
+            void addReferenceImagesToNode(nodeId, files);
+        },
+        [addReferenceImagesToNode],
+    );
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -1587,79 +1717,7 @@ function InfiniteCanvasPage() {
                     event.target.value = "";
                     return;
                 }
-                const targetNode = nodesRef.current.find((node) => node.id === target.nodeId);
-                const batchRootId = targetNode?.metadata?.batchRootId;
-                const targetPosition = targetNode?.position || getCanvasCenter();
-                const referenceNodes = await Promise.all(
-                    imageFiles.map(async (item, index) => {
-                        const image = await uploadImage(item);
-                        const nodeSize = fitNodeSize(image.width, image.height);
-                        return {
-                            id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-                            type: CanvasNodeType.Image,
-                            title: item.name || `参考图 ${index + 1}`,
-                            position: {
-                                x: targetPosition.x - nodeSize.width - 120,
-                                y: targetPosition.y + index * (nodeSize.height + 36),
-                            },
-                            width: nodeSize.width,
-                            height: nodeSize.height,
-                            metadata: { ...imageMetadata(image), prompt: "参考图" },
-                        } satisfies CanvasNodeData;
-                    }),
-                );
-                const referenceIds = referenceNodes.map((node) => node.id);
-                setNodes((prev) => [
-                    ...prev.map((node) => {
-                        if (node.id === target.nodeId) {
-                            return {
-                                ...node,
-                                metadata: {
-                                    ...node.metadata,
-                                    status: node.metadata?.content ? NODE_STATUS_SUCCESS : node.metadata?.status,
-                                    errorDetails: undefined,
-                                    count: 1,
-                                    batchRootId: undefined,
-                                    inputOrder: [...(node.metadata?.inputOrder || []).filter((id) => !referenceIds.includes(id)), ...referenceIds],
-                                },
-                            };
-                        }
-
-                        if (batchRootId && node.id === batchRootId && node.metadata?.isBatchRoot) {
-                            const childIds = (node.metadata.batchChildIds || []).filter((id) => id !== target.nodeId);
-                            const nextPrimaryId = node.metadata.primaryImageId === target.nodeId ? (childIds[0] || batchRootId) : node.metadata.primaryImageId;
-                            const nextPrimaryNode = prev.find((item) => item.id === nextPrimaryId);
-
-                            return {
-                                ...node,
-                                metadata: {
-                                    ...node.metadata,
-                                    isBatchRoot: childIds.length ? node.metadata.isBatchRoot : undefined,
-                                    batchChildIds: childIds.length ? childIds : undefined,
-                                    batchUsesReferenceImages: childIds.length ? node.metadata.batchUsesReferenceImages : undefined,
-                                    primaryImageId: childIds.length ? nextPrimaryId : undefined,
-                                    imageBatchExpanded: childIds.length ? node.metadata.imageBatchExpanded : undefined,
-                                    count: childIds.length + 1,
-                                    content: nextPrimaryNode?.metadata?.content || node.metadata.content,
-                                    naturalWidth: nextPrimaryNode?.metadata?.naturalWidth || node.metadata.naturalWidth,
-                                    naturalHeight: nextPrimaryNode?.metadata?.naturalHeight || node.metadata.naturalHeight,
-                                    freeResize: nextPrimaryNode?.metadata?.freeResize ?? node.metadata.freeResize,
-                                },
-                            };
-                        }
-
-                        return node;
-                    }),
-                    ...referenceNodes,
-                ]);
-                setConnections((prev) => [
-                    ...prev.filter((connection) => !(batchRootId && connection.fromNodeId === batchRootId && connection.toNodeId === target.nodeId)),
-                    ...referenceIds.map((id) => ({ id: nanoid(), fromNodeId: id, toNodeId: target.nodeId! })),
-                ]);
-                setSelectedNodeIds(new Set([target.nodeId]));
-                setSelectedConnectionId(null);
-                setDialogNodeId(target.nodeId);
-                message.success(`已添加${referenceNodes.length} 张参考图，输入修改要求后生成`);
+                await addReferenceImagesToNode(target.nodeId, imageFiles);
                 uploadTargetRef.current = null;
                 event.target.value = "";
                 return;
@@ -1734,7 +1792,7 @@ function InfiniteCanvasPage() {
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createFileNodes, getCanvasCenter, message, screenToCanvas, size.height, size.width],
+        [addReferenceImagesToNode, createFileNodes, message, screenToCanvas, size.height, size.width],
     );
 
     const handleDrop = useCallback(
@@ -2358,6 +2416,8 @@ function InfiniteCanvasPage() {
                                     onPromptChange={handleNodePromptChange}
                                     onConfigChange={handleConfigNodeChange}
                                     onGenerate={handleGenerateNode}
+                                    onUploadReference={(nodeId) => handleUploadRequest(nodeId, undefined, "reference")}
+                                    onPasteReference={pasteReferenceImages}
                                     onImageSettingsOpenChange={(open) => {
                                         setNodeImageSettingsOpen(open);
                                         if (open) setToolbarNodeId(null);
@@ -2478,6 +2538,11 @@ function InfiniteCanvasPage() {
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         onClose={() => setContextMenu(null)}
+                        canCopyImage={Boolean(nodeById.get(contextMenu.nodeId)?.type === CanvasNodeType.Image && nodeById.get(contextMenu.nodeId)?.metadata?.content)}
+                        onCopyImage={() => {
+                            void copyImageNodeToClipboard(contextMenu.nodeId);
+                            setContextMenu(null);
+                        }}
                         onDuplicate={() => {
                             duplicateNode(contextMenu.nodeId);
                             setContextMenu(null);
@@ -2747,6 +2812,30 @@ function Shortcut({ keys, value }: { keys: string[]; value: string }) {
             <span className="text-right text-sm opacity-55">{value}</span>
         </div>
     );
+}
+
+async function imageUrlToPngBlob(url: string) {
+    const blob = await (await fetch(url)).blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("读取图片失败"));
+        img.src = objectUrl;
+    });
+    try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width || 1;
+        canvas.height = image.naturalHeight || image.height || 1;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("复制图片失败");
+        context.drawImage(image, 0, 0);
+        return await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob((nextBlob) => (nextBlob ? resolve(nextBlob) : reject(new Error("复制图片失败"))), "image/png");
+        });
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
 }
 
 function imageExtension(dataUrl: string) {
