@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, LoaderCircle, Play } from "lucide-react";
 import { App, Button, Empty, Input, Modal } from "antd";
@@ -290,9 +290,29 @@ function VerticalOrderButtons({ index, total, onMove }: { index: number; total: 
 function HorizontalOrderButtons({ index, total, onMove }: { index: number; total: number; onMove: (offset: number) => void }) {
     return (
         <div className="absolute inset-x-1 bottom-1 flex justify-between">
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
+            <ReferenceArrow disabled={index <= 0} onClick={() => onMove(-1)}>
+                <ArrowLeft className="size-3" />
+            </ReferenceArrow>
+            <ReferenceArrow disabled={index >= total - 1} onClick={() => onMove(1)}>
+                <ArrowRight className="size-3" />
+            </ReferenceArrow>
         </div>
+    );
+}
+
+function ReferenceArrow({ disabled, onClick, children }: { disabled: boolean; onClick: () => void; children: ReactNode }) {
+    return (
+        <button
+            type="button"
+            className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-white/55 text-black transition hover:bg-white/80 disabled:opacity-25"
+            disabled={disabled}
+            onClick={(event) => {
+                event.stopPropagation();
+                onClick();
+            }}
+        >
+            {children}
+        </button>
     );
 }
 

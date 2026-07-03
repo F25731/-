@@ -1,7 +1,7 @@
 "use client";
 
-import { Button } from "antd";
 import { ArrowLeft, ArrowRight } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { NodeGenerationInput } from "./canvas-node-generation";
@@ -24,12 +24,32 @@ export function CanvasReferenceStrip({ inputs, theme, onMove }: CanvasReferenceS
                         <img src={input.image!.dataUrl} alt={input.title} className="aspect-square w-full object-cover" />
                         <span className="absolute left-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-semibold text-white">图{index + 1}</span>
                         <div className="absolute inset-x-1 bottom-1 flex justify-between">
-                            <Button size="small" className="!h-5 !w-5 !min-w-5 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(input, -1)} />
-                            <Button size="small" className="!h-5 !w-5 !min-w-5 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= imageInputs.length - 1} onClick={() => onMove(input, 1)} />
+                            <ReferenceArrow disabled={index <= 0} onClick={() => onMove(input, -1)}>
+                                <ArrowLeft className="size-3" />
+                            </ReferenceArrow>
+                            <ReferenceArrow disabled={index >= imageInputs.length - 1} onClick={() => onMove(input, 1)}>
+                                <ArrowRight className="size-3" />
+                            </ReferenceArrow>
                         </div>
                     </div>
                 </div>
             ))}
         </div>
+    );
+}
+
+function ReferenceArrow({ disabled, onClick, children }: { disabled: boolean; onClick: () => void; children: ReactNode }) {
+    return (
+        <button
+            type="button"
+            className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-white/55 text-black transition hover:bg-white/80 disabled:opacity-25"
+            disabled={disabled}
+            onClick={(event) => {
+                event.stopPropagation();
+                onClick();
+            }}
+        >
+            {children}
+        </button>
     );
 }
