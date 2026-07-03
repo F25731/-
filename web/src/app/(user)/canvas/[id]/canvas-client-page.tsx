@@ -563,19 +563,19 @@ function InfiniteCanvasPage() {
     const getConnectableNodeAtPoint = useCallback(
         (clientX: number, clientY: number, current: ConnectionHandle) => {
             const world = screenToCanvas(clientX, clientY);
+            const radius = 76 / viewportRef.current.k;
+            const padding = 44 / viewportRef.current.k;
             return (
                 [...nodesRef.current]
                     .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
                     .reverse()
-                    .find(
-                        (node) =>
-                            node.id !== current.nodeId &&
-                            Boolean(normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) &&
-                            world.x >= node.position.x &&
-                            world.x <= node.position.x + node.width &&
-                            world.y >= node.position.y &&
-                            world.y <= node.position.y + node.height,
-                    )?.id || null
+                    .find((node) => {
+                        if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) return false;
+                        const insideNode = world.x >= node.position.x - padding && world.x <= node.position.x + node.width + padding && world.y >= node.position.y - padding && world.y <= node.position.y + node.height + padding;
+                        const leftDistance = distance(world, { x: node.position.x, y: node.position.y + node.height / 2 });
+                        const rightDistance = distance(world, { x: node.position.x + node.width, y: node.position.y + node.height / 2 });
+                        return insideNode || leftDistance <= radius || rightDistance <= radius;
+                    })?.id || null
             );
         },
         [screenToCanvas],
@@ -3043,6 +3043,10 @@ function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: C
     if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
     if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
     return { fromNodeId: first.id, toNodeId: second.id };
+}
+
+function distance(a: Position, b: Position) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function getInputSummary(inputs: NodeGenerationInput[]) {

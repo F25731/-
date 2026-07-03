@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ClipboardPaste, LoaderCircle, Plus } from "lucide-react";
+import { ArrowUp, ImagePlus, LoaderCircle, Plus, Type } from "lucide-react";
 import { App, Button } from "antd";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -96,7 +96,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPromptMenu(null);
         if (isDisabled) return;
         if (!navigator.clipboard?.readText) {
-            message.warning("当前浏览器不支持直接读取剪贴板文本，请使用 Ctrl+V 粘贴");
+            textareaRef.current?.focus();
+            message.warning("当前浏览器不允许菜单读取剪贴板文本，请使用 Ctrl+V 粘贴");
             return;
         }
         let text = "";
@@ -120,9 +121,32 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             textarea?.setSelectionRange(start + text.length, start + text.length);
         });
     };
-    const uploadReferenceFromMenu = () => {
+    const pasteReferenceImage = async () => {
         setPromptMenu(null);
-        onUploadReference?.(node.id);
+        if (mode !== "image" || isDisabled) return;
+        if (!navigator.clipboard?.read) {
+            textareaRef.current?.focus();
+            message.warning("当前浏览器不允许菜单读取剪贴板图片，请使用 Ctrl+V 粘贴参考图");
+            return;
+        }
+        try {
+            const items = await navigator.clipboard.read();
+            const files: File[] = [];
+            for (const item of items) {
+                const imageType = item.types.find((type) => type.startsWith("image/"));
+                if (!imageType) continue;
+                const blob = await item.getType(imageType);
+                files.push(new File([blob], `clipboard-reference-${files.length + 1}.${imageType.includes("png") ? "png" : "jpg"}`, { type: imageType }));
+            }
+            if (!files.length) {
+                message.warning("剪贴板里没有图片");
+                return;
+            }
+            onPasteReference?.(node.id, files);
+        } catch {
+            textareaRef.current?.focus();
+            message.warning("当前浏览器不允许菜单读取剪贴板图片，请使用 Ctrl+V 粘贴参考图");
+        }
     };
     const moveInput = (input: NodeGenerationInput, offset: number) => {
         const imageInputs = inputs.filter((item) => item.type === "image");
@@ -193,8 +217,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                       <PromptInputContextMenu
                           x={promptMenu.x}
                           y={promptMenu.y}
-                          canAddReference={mode === "image"}
-                          onAddReference={uploadReferenceFromMenu}
+                          canPasteReference={mode === "image"}
+                          onPasteReference={() => void pasteReferenceImage()}
                           onPasteText={() => void pastePromptText()}
                           onPointerDown={(event) => event.stopPropagation()}
                       />,
@@ -264,12 +288,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     );
 }
 
-function PromptInputContextMenu({ x, y, canAddReference, onAddReference, onPasteText, onPointerDown }: { x: number; y: number; canAddReference: boolean; onAddReference: () => void; onPasteText: () => void; onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void }) {
+function PromptInputContextMenu({ x, y, canPasteReference, onPasteReference, onPasteText, onPointerDown }: { x: number; y: number; canPasteReference: boolean; onPasteReference: () => void; onPasteText: () => void; onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div className="fixed z-[1300] min-w-44 overflow-hidden rounded-xl border py-1 shadow-2xl" style={{ left: x, top: y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onPointerDown={onPointerDown}>
-            {canAddReference ? <PromptMenuButton icon={<Plus className="size-4" />} label="添加参考图" onClick={onAddReference} /> : null}
-            <PromptMenuButton icon={<ClipboardPaste className="size-4" />} label="粘贴提示词文本" onClick={onPasteText} />
+            <PromptMenuButton icon={<Type className="size-4" />} label="粘贴提示词" onClick={onPasteText} />
+            {canPasteReference ? <PromptMenuButton icon={<ImagePlus className="size-4" />} label="粘贴参考图" onClick={onPasteReference} /> : null}
         </div>
     );
 }
