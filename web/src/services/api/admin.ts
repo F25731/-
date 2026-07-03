@@ -244,6 +244,7 @@ export type AdminModel = {
     apiKey?: string;
     hasApiKey?: boolean;
     tierModels?: Record<string, string>;
+    defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
     enabled: boolean;

@@ -42,6 +42,11 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	if item.Type == model.AdminModelTypeImage && len(item.TierModels) == 0 {
 		return model.AdminModel{}, errors.New("图片分组至少配置一个清晰度模型")
 	}
+	if item.Type == model.AdminModelTypeImage {
+		item.DefaultTier = normalizeDefaultTier(item.DefaultTier, item.TierModels)
+	} else {
+		item.DefaultTier = ""
+	}
 	if item.ModelID == "" && item.Type != model.AdminModelTypeImage {
 		item.ModelID = item.Name
 	}
@@ -184,6 +189,22 @@ func normalizeTierModels(values map[string]string) map[string]string {
 		}
 	}
 	return next
+}
+
+func normalizeDefaultTier(value string, tierModels map[string]string) string {
+	value = strings.TrimSpace(value)
+	if tierModels[value] != "" {
+		return value
+	}
+	if tierModels["1k"] != "" {
+		return "1k"
+	}
+	for _, tier := range []string{"512", "2k", "4k"} {
+		if tierModels[tier] != "" {
+			return tier
+		}
+	}
+	return "1k"
 }
 
 func normalizeSupportedSizes(values []string) []string {

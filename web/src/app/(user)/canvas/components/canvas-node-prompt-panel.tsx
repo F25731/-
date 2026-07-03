@@ -7,11 +7,13 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, defaultImageTierForModel, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
+import type { NodeGenerationInput } from "./canvas-node-generation";
+import { CanvasReferenceStrip } from "./canvas-reference-strip";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "../types";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -22,12 +24,13 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    inputs?: NodeGenerationInput[];
     onUploadReference?: (nodeId: string) => void;
     onPasteReference?: (nodeId: string, files: File[]) => void;
     onImageSettingsOpenChange?: (open: boolean) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onUploadReference, onPasteReference, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, inputs = [], onUploadReference, onPasteReference, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
     const { message } = App.useApp();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -78,7 +81,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         if (mode === "image") {
             updateConfig("imageModel", model);
             updateConfig("model", model);
-            onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) });
+            onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: defaultImageTierForModel(config, model) });
             return;
         }
         if (mode === "video") {
@@ -121,6 +124,18 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPromptMenu(null);
         onUploadReference?.(node.id);
     };
+    const moveInput = (input: NodeGenerationInput, offset: number) => {
+        const imageInputs = inputs.filter((item) => item.type === "image");
+        const sameTypeIndex = imageInputs.findIndex((item) => item.nodeId === input.nodeId);
+        const targetInput = imageInputs[sameTypeIndex + offset];
+        if (!targetInput) return;
+        const index = inputs.findIndex((item) => item.nodeId === input.nodeId);
+        const targetIndex = inputs.findIndex((item) => item.nodeId === targetInput.nodeId);
+        const next = [...inputs];
+        [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+        onConfigChange(node.id, { inputOrder: next.map((item) => item.nodeId) });
+        message.success("已调整参考图顺序");
+    };
 
     if (isNodeGenerating) {
         return (
@@ -145,6 +160,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onPointerDown={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
         >
+            {mode === "image" ? <CanvasReferenceStrip inputs={inputs} theme={theme} onMove={moveInput} /> : null}
+
             <textarea
                 ref={textareaRef}
                 value={prompt}
@@ -278,12 +295,13 @@ function getInitialPrompt(node: CanvasNodeData) {
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : globalConfig.textModel;
+    const model = node.metadata?.model || defaultModel || globalConfig.model;
     return {
         ...globalConfig,
-        model: node.metadata?.model || defaultModel || globalConfig.model,
+        model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        imageTier: node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        imageTier: mode === "image" ? normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || defaultImageTierForModel(globalConfig, model)) : node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
+        size: mode === "image" ? normalizeImageSizeForModel(globalConfig, model, node.metadata?.size || globalConfig.size || defaultConfig.size) : node.metadata?.size || globalConfig.size || defaultConfig.size,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

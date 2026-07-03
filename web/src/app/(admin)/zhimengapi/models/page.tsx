@@ -57,10 +57,10 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4 });
+            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4 });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, supportedSizes: ["auto", "1:1"], referenceLimit: 4 });
+            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4 });
         }
     };
 
@@ -230,6 +230,18 @@ export default function ModelsPage() {
                                     </Form.Item>
                                 ))}
                             </div>
+                            <Form.Item shouldUpdate noStyle>
+                                {() => {
+                                    const tierModels = form.getFieldValue("tierModels") || {};
+                                    const configuredTiers = IMAGE_MODEL_TIERS.filter((tier) => String(tierModels[tier] || "").trim());
+                                    const options = (configuredTiers.length ? configuredTiers : IMAGE_MODEL_TIERS).map((tier) => ({ label: IMAGE_MODEL_TIER_LABELS[tier], value: tier }));
+                                    return (
+                                        <Form.Item name="defaultTier" label="默认画质" rules={[{ required: true, message: "请选择默认画质" }]} extra="用户新建画布节点或切换到该分组时，默认使用这个清晰度。">
+                                            <Select options={options} placeholder="请选择默认画质" />
+                                        </Form.Item>
+                                    );
+                                }}
+                            </Form.Item>
                             <Form.Item name="supportedSizes" label="支持比例" rules={[{ required: true, message: "请选择支持比例" }]} extra="用户选择该分组后，画布里只显示这些比例。">
                                 <Select mode="multiple" options={aspectOptions} />
                             </Form.Item>
@@ -279,8 +291,9 @@ function TierModelSummary({ model }: { model: AdminModel }) {
     return (
         <Space size={4} wrap>
             {configured.map((tier) => (
-                <Tag key={tier}>
+                <Tag key={tier} color={model.defaultTier === tier ? "blue" : undefined}>
                     {tier}: {tierModels[tier]}
+                    {model.defaultTier === tier ? " 默认" : ""}
                 </Tag>
             ))}
         </Space>
@@ -289,15 +302,22 @@ function TierModelSummary({ model }: { model: AdminModel }) {
 
 function normalizeModelPayload(values: AdminModel) {
     if (values.type !== "image") {
-        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, supportedSizes: [], referenceLimit: 4 };
+        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, defaultTier: "", supportedSizes: [], referenceLimit: 4 };
     }
     const tierModels: Record<string, string> = Object.fromEntries(Object.entries(values.tierModels || {}).map(([key, value]) => [key, String(value || "").trim()]).filter(([, value]) => value));
+    const defaultTier = tierModels[String(values.defaultTier || "")] ? String(values.defaultTier) : firstConfiguredTier(tierModels);
     return {
         ...values,
         modelId: "",
         apiKey: "",
         tierModels,
+        defaultTier,
         supportedSizes: values.supportedSizes?.length ? values.supportedSizes : ["auto"],
         referenceLimit: Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))),
     };
+}
+
+function firstConfiguredTier(tierModels: Record<string, string> | undefined) {
+    if (tierModels?.["1k"]) return "1k";
+    return IMAGE_MODEL_TIERS.find((tier) => tierModels?.[tier]) || "1k";
 }

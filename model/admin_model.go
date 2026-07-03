@@ -18,6 +18,7 @@ type AdminModel struct {
 	APIURL         string            `json:"apiUrl"`
 	APIKey         string            `json:"apiKey"`
 	TierModels     map[string]string `json:"tierModels" gorm:"serializer:json"`
+	DefaultTier    string            `json:"defaultTier"`
 	SupportedSizes []string          `json:"supportedSizes" gorm:"serializer:json"`
 	ReferenceLimit int               `json:"referenceLimit"`
 	HasAPIKey      bool              `json:"hasApiKey" gorm:"-"`

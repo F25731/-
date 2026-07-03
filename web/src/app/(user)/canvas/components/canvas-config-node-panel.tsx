@@ -6,11 +6,12 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIc
 import { App, Button, Empty, Input, Modal } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, defaultImageTierForModel, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import type { NodeGenerationInput } from "./canvas-node-generation";
+import { CanvasReferenceStrip } from "./canvas-reference-strip";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "../types";
 
 type CanvasConfigNodePanelProps = {
@@ -67,7 +68,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
     const selectImageModel = (model: string) => {
         updateConfig("imageModel", model);
         updateConfig("model", model);
-        onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: normalizeImageTierForModel(config, model, config.imageTier) });
+        onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: defaultImageTierForModel(config, model) });
     };
 
     return (
@@ -88,6 +89,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
                     预览
                 </button>
             </div>
+
+            <CanvasReferenceStrip inputs={inputs} theme={theme} onMove={moveInput} />
 
             <div className="mb-2 cursor-default" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <Input.TextArea
@@ -268,7 +271,7 @@ function ImageSortCard({
         <div className="w-24 shrink-0 overflow-hidden rounded-lg border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
             <div className="relative">
                 <img src={input.image.dataUrl} alt={input.title} className="aspect-square w-full object-cover" />
-                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{imageIndex + 1}</span>
+                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">图{imageIndex + 1}</span>
                 <HorizontalOrderButtons index={imageIndex} total={imageTotal} onMove={(offset) => onMove(input, offset)} />
             </div>
         </div>
@@ -304,12 +307,13 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : globalConfig.textModel;
+    const model = node.metadata?.model || defaultModel || globalConfig.model || defaultConfig.model;
     return {
         ...globalConfig,
-        model: node.metadata?.model || defaultModel || globalConfig.model || defaultConfig.model,
+        model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        imageTier: node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        imageTier: mode === "image" ? normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || defaultImageTierForModel(globalConfig, model)) : node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
+        size: mode === "image" ? normalizeImageSizeForModel(globalConfig, model, node.metadata?.size || globalConfig.size || defaultConfig.size) : node.metadata?.size || globalConfig.size || defaultConfig.size,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

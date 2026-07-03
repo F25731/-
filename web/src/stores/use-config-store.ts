@@ -22,6 +22,7 @@ export type StoredUserModel = {
     type: "image" | "video" | "parse" | "prompt";
     apiUrl: string;
     tierModels?: Record<string, string>;
+    defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
     enabled: boolean;
@@ -54,6 +55,7 @@ export type AiConfig = {
     modelTypes: Record<string, "image" | "video" | "parse" | "prompt">;
     modelSupportedSizes: Record<string, string[]>;
     modelTierOptions: Record<string, string[]>;
+    modelDefaultTiers: Record<string, string>;
     modelReferenceLimits: Record<string, number>;
 };
 
@@ -80,6 +82,7 @@ export const defaultConfig: AiConfig = {
     modelTypes: {},
     modelSupportedSizes: {},
     modelTierOptions: {},
+    modelDefaultTiers: {},
     modelReferenceLimits: {},
 };
 
@@ -109,6 +112,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         const modelTypes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type]));
         const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
         const modelTierOptions = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]) : []]));
+        const modelDefaultTiers = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier])) : ""]));
         const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, normalizeReferenceLimit(model.referenceLimit)]));
         const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "";
         const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
@@ -133,6 +137,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTypes,
             modelSupportedSizes,
             modelTierOptions,
+            modelDefaultTiers,
             modelReferenceLimits,
         };
     }
@@ -152,6 +157,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             models: config.models.length > 0 ? config.models : [FIXED_IMAGE_MODEL],
             modelSupportedSizes: config.modelSupportedSizes || {},
             modelTierOptions: config.modelTierOptions || {},
+            modelDefaultTiers: config.modelDefaultTiers || {},
             modelReferenceLimits: config.modelReferenceLimits || {},
         };
     }
@@ -172,6 +178,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             models: [FIXED_IMAGE_MODEL],
             modelSupportedSizes: {},
             modelTierOptions: {},
+            modelDefaultTiers: {},
             modelReferenceLimits: {},
         };
     }
@@ -189,6 +196,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         systemPrompt: config.systemPrompt || modelChannel.systemPrompt || "",
         modelSupportedSizes: config.modelSupportedSizes || {},
         modelTierOptions: config.modelTierOptions || {},
+        modelDefaultTiers: config.modelDefaultTiers || {},
         modelReferenceLimits: config.modelReferenceLimits || {},
     };
 }
@@ -314,6 +322,7 @@ export const useConfigStore = create<ConfigStore>()(
                         modelTypes: config.modelTypes || {},
                         modelSupportedSizes: config.modelSupportedSizes || {},
                         modelTierOptions: config.modelTierOptions || {},
+                        modelDefaultTiers: config.modelDefaultTiers || {},
                         modelReferenceLimits: config.modelReferenceLimits || {},
                     },
                 };
@@ -365,7 +374,11 @@ export function normalizeImageSizeForModel(config: AiConfig, modelName: string, 
 
 export function normalizeImageTierForModel(config: AiConfig, modelName: string, tier: string) {
     const tiers = supportedImageTiers(config, modelName);
-    return tiers.includes(tier) ? tier : tiers[0] || "1k";
+    return tiers.includes(tier) ? tier : defaultImageTierForModel(config, modelName);
+}
+
+export function defaultImageTierForModel(config: AiConfig, modelName: string) {
+    return normalizeDefaultModelTier(config.modelDefaultTiers[modelName], supportedImageTiers(config, modelName));
 }
 
 export function imageReferenceLimit(config: AiConfig, modelName = config.model || config.imageModel) {
@@ -375,6 +388,13 @@ export function imageReferenceLimit(config: AiConfig, modelName = config.model |
 function normalizeReferenceLimit(value: number | undefined) {
     const next = Math.floor(Math.abs(Number(value)) || 4);
     return Math.max(1, Math.min(20, next));
+}
+
+function normalizeDefaultModelTier(defaultTier: string | undefined, tiers: readonly string[]) {
+    const value = String(defaultTier || "").trim();
+    if (tiers.includes(value)) return value;
+    if (tiers.includes("1k")) return "1k";
+    return tiers[0] || "1k";
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {

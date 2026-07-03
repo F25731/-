@@ -174,8 +174,9 @@ function ImageGroupMeta({ model }: { model: AdminModel }) {
                 <Tag key={size}>{size}</Tag>
             ))}
             {tiers.map((tier) => (
-                <Tag key={tier} color="blue">
+                <Tag key={tier} color={model.defaultTier === tier ? "blue" : undefined}>
                     {tier}
+                    {model.defaultTier === tier ? " 默认" : ""}
                 </Tag>
             ))}
             <Tag color="purple">参考图 {model.referenceLimit || 4} 张</Tag>
