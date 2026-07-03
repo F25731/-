@@ -9,7 +9,7 @@ import { saveAs } from "file-saver";
 import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { getImageBlob, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -1589,35 +1589,70 @@ function InfiniteCanvasPage() {
 
     const downloadCanvasImages = useCallback(
         async (scope: "all" | "selected") => {
+            const includeLocalReferences = await new Promise<boolean>((resolve) => {
+                modal.confirm({
+                    title: "是否打包本地参考图？",
+                    content: "选择“是”会把画布里本地上传或粘贴的参考图一起放入压缩包；选择“否”只打包生成图片。",
+                    okText: "是",
+                    cancelText: "否",
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                });
+            });
             const selectedIds = selectedNodeIdsRef.current;
             const sourceNodes = scope === "selected" ? nodesRef.current.filter((node) => selectedIds.has(node.id)) : nodesRef.current;
             const seen = new Set<string>();
             const imageNodes = sourceNodes.filter((node) => {
                 const content = node.type === CanvasNodeType.Image ? node.metadata?.content : "";
-                if (!content || seen.has(content)) return false;
-                seen.add(content);
+                const key = node.metadata?.storageKey || content;
+                if (!content || seen.has(key) || isLocalReferenceImageNode(node)) return false;
+                seen.add(key);
                 return true;
             });
-            if (!imageNodes.length) {
+            const referenceNodes = includeLocalReferences
+                ? sourceNodes.filter((node) => {
+                      const key = node.metadata?.storageKey;
+                      if (!isLocalReferenceImageNode(node) || !key || seen.has(key)) return false;
+                      seen.add(key);
+                      return true;
+                  })
+                : [];
+            if (!imageNodes.length && !referenceNodes.length) {
                 message.warning(scope === "selected" ? "选中节点里没有可下载图片" : "当前画布没有可下载图片");
                 return;
             }
             try {
-                const files = await Promise.all(
+                const imageResults = await Promise.allSettled(
                     imageNodes.map(async (node, index) => ({
                         name: `${String(index + 1).padStart(3, "0")}-${safeFileName(node.title || node.id)}.png`,
                         data: await imageUrlToPngBlob(node.metadata!.content!),
                     })),
                 );
+                const referenceResults = await Promise.allSettled(
+                    referenceNodes.map(async (node, index) => {
+                        const blob = await getImageBlob(node.metadata!.storageKey!);
+                        if (!blob) throw new Error("本地参考图已丢失");
+                        return {
+                            name: `本地参考图/${String(index + 1).padStart(3, "0")}-${safeFileName(node.title || node.id)}.${fileExtension(blob.type, node.metadata!.content)}`,
+                            data: blob,
+                        };
+                    }),
+                );
+                const files = [...imageResults, ...referenceResults].flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
+                const skipped = imageResults.length + referenceResults.length - files.length;
+                if (!files.length) {
+                    message.warning(skipped ? `共有 ${skipped} 张图片无法打包，已全部跳过` : "没有可打包的图片");
+                    return;
+                }
                 const zip = await createZip(files);
                 const projectName = safeFileName(currentProject?.title || "canvas-images");
                 saveAs(zip, `${projectName}-${scope === "selected" ? "选中图片" : "全部图片"}.zip`);
-                message.success(`已打包 ${files.length} 张图片`);
+                message.success(skipped ? `已打包 ${files.length} 张图片，跳过 ${skipped} 张失败图片` : `已打包 ${files.length} 张图片`);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "图片打包失败");
             }
         },
-        [currentProject?.title, message],
+        [currentProject?.title, message, modal],
     );
 
     const saveNodeAsset = useCallback(
@@ -2891,6 +2926,19 @@ function imageExtension(dataUrl: string) {
 
 function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_").trim() || "canvas-image";
+}
+
+function isLocalReferenceImageNode(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Image || !node.metadata?.storageKey?.startsWith("image:")) return false;
+    const prompt = node.metadata.prompt?.trim();
+    const title = node.title?.trim();
+    return prompt === "参考图" || title?.startsWith("参考图") || (!node.metadata.model && !node.metadata.originalPrompt && !node.metadata.generationType);
+}
+
+function fileExtension(mimeType = "", url = "") {
+    const fromMime = mimeType.match(/image\/([a-z0-9.+-]+)/i)?.[1];
+    if (fromMime) return fromMime === "jpeg" ? "jpg" : fromMime;
+    return imageExtension(url);
 }
 
 function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
