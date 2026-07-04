@@ -78,6 +78,7 @@ export default function DetailWorkbenchPage() {
     const [selectedLlmId, setSelectedLlmId] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [imageSettingsOpen, setImageSettingsOpen] = useState(false);
+    const [centerImageSettingsOpen, setCenterImageSettingsOpen] = useState(false);
     const [references, setReferences] = useState<DetailReference[]>([]);
     const [productInfo, setProductInfo] = useState("");
     const [styleRequest, setStyleRequest] = useState("");
@@ -648,7 +649,7 @@ export default function DetailWorkbenchPage() {
                                 <span>画质、比例与张数</span>
                                 <ChevronDown className={cn("size-4 transition", imageSettingsOpen && "rotate-180")} />
                             </button>
-                            {imageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} className="mt-3 space-y-4" /> : null}
+                            {imageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} showCount={false} className="mt-3 space-y-4" /> : null}
                         </Panel>
 
                         <Button type="primary" size="large" block icon={isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning} onClick={() => void startDesign()}>
@@ -685,6 +686,19 @@ export default function DetailWorkbenchPage() {
                         </div>
 
                         <div className="rounded-lg border border-white/10 bg-[#171717] p-3">
+                            <div className="mb-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="min-w-24 text-sm font-medium text-stone-200">生图模型</div>
+                                    <div className="min-w-[220px] flex-1">
+                                        <ModelPicker config={effectiveConfig} value={effectiveConfig.imageModel || effectiveConfig.model} onChange={setImageModel} onMissingConfig={() => openConfigDialog(true)} type="image" fullWidth />
+                                    </div>
+                                    <button type="button" className="flex h-8 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-stone-300 transition hover:border-white/25" onClick={() => setCenterImageSettingsOpen((value) => !value)}>
+                                        <span>画质与比例</span>
+                                        <ChevronDown className={cn("size-3.5 transition", centerImageSettingsOpen && "rotate-180")} />
+                                    </button>
+                                </div>
+                                {centerImageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} showCount={false} className="mt-3 space-y-4" /> : null}
+                            </div>
                             <Input.TextArea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder={currentScreen?.index === 1 ? "输入对第一屏的修改建议。系统会调整整体设计方案并重新生成第一屏。" : "输入对当前屏的局部修改建议。系统只改写当前屏提示词并重新生成。"} />
                             <div className="mt-3 flex flex-wrap justify-between gap-2">
                                 <Space wrap>

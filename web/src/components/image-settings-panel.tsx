@@ -18,9 +18,10 @@ type ImageSettingsPanelProps = {
     className?: string;
     maxCount?: number;
     quickCount?: number;
+    showCount?: boolean;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[340px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = MAX_IMAGE_GENERATION_COUNT, quickCount = MAX_IMAGE_GENERATION_COUNT }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[340px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = MAX_IMAGE_GENERATION_COUNT, quickCount = MAX_IMAGE_GENERATION_COUNT, showCount = true }: ImageSettingsPanelProps) {
     const normalizedMaxCount = Math.max(1, Math.min(MAX_IMAGE_GENERATION_COUNT, maxCount));
     const normalizedQuickCount = Math.max(1, Math.min(normalizedMaxCount, quickCount));
     const count = Math.max(1, Math.min(normalizedMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -74,17 +75,19 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div>
-                <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {Array.from({ length: normalizedQuickCount }, (_, index) => index + 1).map((value) => (
-                            <OptionPill key={value} selected={count === value} theme={theme} onClick={() => updateCount(value)}>
-                                {value} 张
-                            </OptionPill>
-                        ))}
-                        <CountInput value={count} max={normalizedMaxCount} theme={theme} onChange={updateCount} />
+                {showCount ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {Array.from({ length: normalizedQuickCount }, (_, index) => index + 1).map((value) => (
+                                <OptionPill key={value} selected={count === value} theme={theme} onClick={() => updateCount(value)}>
+                                    {value} 张
+                                </OptionPill>
+                            ))}
+                            <CountInput value={count} max={normalizedMaxCount} theme={theme} onChange={updateCount} />
+                        </div>
                     </div>
-                </div>
+                ) : null}
             </div>
         </ImageSettingsTheme>
     );
