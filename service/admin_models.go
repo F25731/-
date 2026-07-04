@@ -138,6 +138,55 @@ func ExtractPromptFromImage(image string) (string, error) {
 	return "", safeMessageError{message: "接口没有返回提示词"}
 }
 
+func RequestDetailPrompt(modelID string, apiKey string, messages []any) (string, error) {
+	modelID = strings.TrimSpace(modelID)
+	apiKey = strings.TrimSpace(apiKey)
+	if modelID == "" {
+		return "", safeMessageError{message: "请选择详情图提示词模型"}
+	}
+	if apiKey == "" {
+		return "", safeMessageError{message: "请先填写 LLM API Key"}
+	}
+	if len(messages) == 0 {
+		return "", safeMessageError{message: "详情图提示词请求内容不能为空"}
+	}
+	detailModel, err := selectDetailPromptModel(modelID)
+	if err != nil {
+		return "", err
+	}
+	upstreamModelID := strings.TrimSpace(detailModel.ModelID)
+	if upstreamModelID == "" {
+		upstreamModelID = detailModel.Name
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":       upstreamModelID,
+		"messages":    messages,
+		"temperature": 0.7,
+	})
+	channel := model.ModelChannel{BaseURL: detailModel.APIURL, APIKey: apiKey}
+	request, err := http.NewRequest(http.MethodPost, BuildModelChannelURL(channel, "/chat/completions"), bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	client := http.Client{Timeout: 180 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", safeMessageError{message: "详情图提示词接口访问超时或失败，请检查 API Key 或模型是否可用"}
+	}
+	defer response.Body.Close()
+	responseBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode >= http.StatusBadRequest {
+		return "", readAdminChannelError(responseBody, response.StatusCode, "详情图提示词请求失败")
+	}
+	content := readChatCompletionContent(responseBody)
+	if content != "" {
+		return content, nil
+	}
+	return "", safeMessageError{message: "详情图提示词接口没有返回内容"}
+}
+
 func selectPromptModel() (model.AdminModel, error) {
 	items, _, err := repository.ListAdminModels(true)
 	if err != nil {
@@ -149,6 +198,49 @@ func selectPromptModel() (model.AdminModel, error) {
 		}
 	}
 	return model.AdminModel{}, safeMessageError{message: "后台还没有配置提示词模型"}
+}
+
+func selectDetailPromptModel(id string) (model.AdminModel, error) {
+	items, _, err := repository.ListAdminModels(true)
+	if err != nil {
+		return model.AdminModel{}, err
+	}
+	for _, item := range items {
+		if item.Type == model.AdminModelTypeDetailPrompt && item.ID == id && strings.TrimSpace(item.APIURL) != "" {
+			return item, nil
+		}
+	}
+	return model.AdminModel{}, safeMessageError{message: "后台还没有配置可用的详情图提示词模型"}
+}
+
+func readChatCompletionContent(body []byte) string {
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content any `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	if len(payload.Choices) == 0 {
+		return ""
+	}
+	content := payload.Choices[0].Message.Content
+	if text, ok := content.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	if parts, ok := content.([]any); ok {
+		var builder strings.Builder
+		for _, part := range parts {
+			if item, ok := part.(map[string]any); ok {
+				if text, ok := item["text"].(string); ok {
+					builder.WriteString(text)
+				}
+			}
+		}
+		return strings.TrimSpace(builder.String())
+	}
+	return ""
 }
 
 func publicAdminModels(items []model.AdminModel) []model.AdminModel {

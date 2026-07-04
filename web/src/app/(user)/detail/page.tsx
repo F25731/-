@@ -8,7 +8,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Download, LoaderCircle, Plus, R
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
-import { requestEdit, requestGeneration } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestPromptExtraction } from "@/services/api/image";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
@@ -339,19 +339,35 @@ export default function DetailWorkbenchPage() {
     };
 
     const createDetailPlan = async () => {
+        const referenceSummaries = await extractReferenceSummaries();
+        setStatusText("正在生成整套详情图设计方案");
         const content = await requestDetailLlm([
             {
                 role: "user",
-                content: [
-                    {
-                        type: "text",
-                        text: buildPlanPrompt({ productInfo, styleRequest, platform, screenCount }),
-                    },
-                    ...(await referenceMessageParts(references)),
-                ],
+                content: buildPlanPrompt({ productInfo, styleRequest, platform, screenCount, referenceSummaries }),
             },
         ]);
-        return normalizePlan(parsePlan(content), screenCount);
+        try {
+            return normalizePlan(parsePlan(content), screenCount);
+        } catch {
+            const repaired = await requestDetailLlm([{ role: "user", content: buildPlanRepairPrompt(content, screenCount) }]);
+            return normalizePlan(parsePlan(repaired), screenCount);
+        }
+    };
+
+    const extractReferenceSummaries = async () => {
+        if (!references.length) return "";
+        setStatusText("正在读取参考图风格");
+        const results = await Promise.allSettled(
+            references.slice(0, 6).map(async (reference, index) => {
+                const text = await requestPromptExtraction(reference);
+                return `${index + 1}. ${text.trim()}`;
+            }),
+        );
+        const summaries = results.flatMap((result) => (result.status === "fulfilled" && result.value ? [result.value] : []));
+        const failed = results.length - summaries.length;
+        if (failed > 0) message.warning(`有 ${failed} 张参考图读取失败，已继续生成`);
+        return summaries.join("\n");
     };
 
     const modifyCurrentScreen = async () => {
@@ -503,11 +519,10 @@ export default function DetailWorkbenchPage() {
 
     const requestDetailLlm = async (messages: unknown[]) => {
         if (!selectedLlm) throw new Error("未选择 LLM");
-        const modelId = selectedLlm.modelId || selectedLlm.name;
         const response = await fetch("/api/detail-llm", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ baseUrl: selectedLlm.apiUrl, apiKey: selectedLlmKey, model: modelId, messages }),
+            body: JSON.stringify({ modelId: selectedLlm.id, apiKey: selectedLlmKey, messages }),
         });
         const responseText = await response.text();
         const payload = parseDetailLlmResponse(responseText);
@@ -824,7 +839,14 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
     );
 }
 
-function buildPlanPrompt(input: { productInfo: string; styleRequest: string; platform: string; screenCount: number }) {
+function buildPlanPrompt(input: { productInfo: string; styleRequest: string; platform: string; screenCount: number; referenceSummaries?: string }) {
+    const referenceBlock = input.referenceSummaries?.trim()
+        ? `
+参考图/竞品图按用户排序提取到的信息：
+${input.referenceSummaries}
+
+请把这些参考信息作为风格、构图、卖点呈现和视觉顺序的依据。越靠前的参考图优先级越高，但不要抄袭具体品牌标识，不要虚构用户没有提供的参数。`
+        : "";
     return `
 你是资深电商详情页设计总监和 AI 生图提示词工程师。请根据用户资料，一次性规划完整电商详情页长图，并写好每一屏的生图提示词。
 
@@ -840,6 +862,7 @@ function buildPlanPrompt(input: { productInfo: string; styleRequest: string; pla
 
 商品信息：
 ${input.productInfo}
+${referenceBlock}
 
 风格和额外要求：
 ${input.styleRequest || "无"}
@@ -856,6 +879,25 @@ ${input.styleRequest || "无"}
     }
   ]
 }
+`.trim();
+}
+
+function buildPlanRepairPrompt(content: string, screenCount: number) {
+    return `
+下面内容本应是电商详情图分屏方案 JSON，但格式不合格。请只根据原内容修复为严格 JSON，不要补充解释，不要 Markdown。
+
+必须符合：
+{
+  "styleSummary": "整套详情页视觉风格摘要",
+  "screens": [
+    {"index":1,"title":"屏幕标题","goal":"本屏目的","prompt":"完整生图提示词"}
+  ]
+}
+
+要求 screens 数量为 ${screenCount}，如果原内容不足，请按同一商品和同一视觉风格补齐。
+
+原内容：
+${content}
 `.trim();
 }
 
@@ -909,15 +951,6 @@ ${feedback}
 
 只输出改写后的当前屏完整生图提示词，不要解释。
 `.trim();
-}
-
-async function referenceMessageParts(references: DetailReference[]) {
-    return Promise.all(
-        references.slice(0, 6).map(async (reference) => ({
-            type: "image_url" as const,
-            image_url: { url: await imageToDataUrl(reference) },
-        })),
-    );
 }
 
 async function hydrateProjectImages(project: DetailProject): Promise<DetailProject> {

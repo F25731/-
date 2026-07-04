@@ -30,6 +30,21 @@ func PromptExtract(w http.ResponseWriter, r *http.Request) {
 	OK(w, result)
 }
 
+func DetailLLM(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		ModelID  string `json:"modelId"`
+		APIKey   string `json:"apiKey"`
+		Messages []any  `json:"messages"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	result, err := service.RequestDetailPrompt(payload.ModelID, payload.APIKey, payload.Messages)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func AdminModels(w http.ResponseWriter, r *http.Request) {
 	result, err := service.AdminModels()
 	if err != nil {
