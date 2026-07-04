@@ -62,7 +62,7 @@ const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 const DEFAULT_SCREEN_COUNT = 6;
 
 export default function DetailWorkbenchPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -92,6 +92,8 @@ export default function DetailWorkbenchPage() {
 
     const currentScreen = screens.find((screen) => screen.index === currentIndex) || null;
     const generatedScreens = screens.filter((screen) => screen.imageUrl);
+    const generatingScreen = screens.find((screen) => screen.status === "generating") || null;
+    const activeProject = projects.find((project) => project.id === activeProjectId) || null;
     const selectedLlm = llmModels.find((model) => model.id === selectedLlmId) || llmModels[0] || null;
     const selectedLlmKey = selectedLlm ? llmKeys[selectedLlm.id]?.trim() || "" : "";
     const imageConfig = useMemo(() => ({ ...effectiveConfig, model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" }), [effectiveConfig]);
@@ -114,7 +116,6 @@ export default function DetailWorkbenchPage() {
                 project.id === activeProjectId
                     ? {
                           ...project,
-                          title: projectTitle(productInfo, project.title),
                           updatedAt: now,
                           references,
                           productInfo,
@@ -158,8 +159,21 @@ export default function DetailWorkbenchPage() {
         }
     };
 
-    const createProject = () => {
+    const openCreateProjectDialog = () => {
+        let title = `详情图项目 ${projects.length + 1}`;
+        modal.confirm({
+            title: "新建详情图项目",
+            icon: null,
+            okText: "创建",
+            cancelText: "取消",
+            content: <Input autoFocus defaultValue={title} placeholder="请输入项目名称" onChange={(event) => (title = event.target.value)} />,
+            onOk: () => createProject(title),
+        });
+    };
+
+    const createProject = (rawTitle?: string) => {
         const now = new Date().toISOString();
+        const title = rawTitle?.trim() || `详情图项目 ${projects.length + 1}`;
         const project: DetailProject = {
             id: `detail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             title: "未命名详情图",
@@ -174,10 +188,21 @@ export default function DetailWorkbenchPage() {
             screens: [],
             currentIndex: 1,
         };
+        project.title = title;
         const next = [project, ...projects];
         setProjects(next);
         localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
         openProject(project);
+    };
+
+    const renameActiveProject = (title: string) => {
+        if (!activeProjectId) return;
+        const now = new Date().toISOString();
+        setProjects((items) => {
+            const next = items.map((project) => (project.id === activeProjectId ? { ...project, title, updatedAt: now } : project));
+            scheduleProjectSave(next);
+            return next;
+        });
     };
 
     const openProject = (project: DetailProject) => {
@@ -488,7 +513,7 @@ export default function DetailWorkbenchPage() {
                             <h1 className="m-0 text-2xl font-semibold">详情图工作台</h1>
                             <p className="mt-2 text-sm text-stone-400">每个项目都会保存在当前浏览器本地。</p>
                         </div>
-                        <Button type="primary" size="large" icon={<Plus className="size-4" />} onClick={createProject}>
+                        <Button type="primary" size="large" icon={<Plus className="size-4" />} onClick={openCreateProjectDialog}>
                             新建详情图项目
                         </Button>
                     </div>
@@ -498,7 +523,7 @@ export default function DetailWorkbenchPage() {
                                 <button key={project.id} type="button" className="group rounded-lg border border-white/10 bg-[#171717] p-4 text-left transition hover:border-white/30" onClick={() => openProject(project)}>
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
-                                            <div className="truncate text-lg font-semibold">{project.title}</div>
+                                            <div className="truncate text-lg font-semibold">{project.title || "未命名详情图"}</div>
                                             <div className="mt-1 text-xs text-stone-500">{new Date(project.updatedAt).toLocaleString()}</div>
                                         </div>
                                         <span
@@ -556,6 +581,15 @@ export default function DetailWorkbenchPage() {
                             <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
                         </Space>
                     </div>
+                    <Input
+                        value={activeProject?.title || ""}
+                        placeholder="项目名称"
+                        className="mb-4"
+                        onChange={(event) => renameActiveProject(event.target.value)}
+                        onBlur={(event) => {
+                            if (!event.target.value.trim()) renameActiveProject("未命名详情图");
+                        }}
+                    />
 
                     <div className="space-y-4">
                         <Panel title="LLM 设计模型">
@@ -634,14 +668,14 @@ export default function DetailWorkbenchPage() {
                             {currentScreen?.status ? <Tag color={currentScreen.status === "ready" ? "success" : currentScreen.status === "generating" ? "processing" : currentScreen.status === "failed" ? "error" : "default"}>{screenStatusLabel(currentScreen.status)}</Tag> : null}
                         </div>
 
-                        <div className="grid h-[640px] place-items-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                        <div className="flex h-[640px] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40 p-4">
                             {currentScreen?.status === "generating" ? (
                                 <div className="flex flex-col items-center gap-3 text-stone-400">
                                     <LoaderCircle className="size-8 animate-spin" />
                                     正在生成图片
                                 </div>
                             ) : currentScreen?.imageUrl ? (
-                                <img src={currentScreen.imageUrl} alt="" className="h-full max-h-full w-full max-w-full object-contain" />
+                                <img src={currentScreen.imageUrl} alt="" className="block max-h-full max-w-full rounded-md object-contain" draggable={false} />
                             ) : (
                                 <div className="text-center text-sm text-stone-500">
                                     <Wand2 className="mx-auto mb-3 size-8 opacity-60" />
@@ -666,6 +700,20 @@ export default function DetailWorkbenchPage() {
                                 </Button>
                             </div>
                         </div>
+                        {generatingScreen ? (
+                            <button
+                                type="button"
+                                className={cn(
+                                    "flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition",
+                                    generatingScreen.index === currentIndex ? "border-blue-400/40 bg-blue-500/10 text-blue-100" : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-blue-400/50 hover:text-blue-100",
+                                )}
+                                onClick={() => setCurrentIndex(generatingScreen.index)}
+                            >
+                                <LoaderCircle className="size-4 animate-spin" />
+                                <span>正在生成第 {generatingScreen.index} 屏</span>
+                                {generatingScreen.index === currentIndex ? <span className="text-xs text-blue-200/70">当前查看中</span> : <span className="text-xs text-blue-200/70">点击切回当前生成屏</span>}
+                            </button>
+                        ) : null}
                     </div>
                 </section>
 
@@ -841,14 +889,6 @@ async function hydrateProjectImages(project: DetailProject): Promise<DetailProje
         ),
     );
     return { ...project, references, screens };
-}
-
-function projectTitle(productInfo: string, fallback: string) {
-    const firstLine = productInfo
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find(Boolean);
-    return firstLine?.slice(0, 24) || fallback || "未命名详情图";
 }
 
 function moveItem<T>(items: T[], from: number, to: number) {
