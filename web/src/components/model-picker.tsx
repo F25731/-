@@ -14,7 +14,7 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
-    type?: "image" | "video" | "parse" | "prompt";
+    type?: "image" | "video" | "parse" | "prompt" | "detail_prompt";
 };
 
 export function ModelPicker({ config, value, onChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, type }: ModelPickerProps) {

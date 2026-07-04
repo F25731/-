@@ -19,7 +19,7 @@ export type StoredUserModel = {
     id: string;
     name: string;
     modelId?: string;
-    type: "image" | "video" | "parse" | "prompt";
+    type: "image" | "video" | "parse" | "prompt" | "detail_prompt";
     apiUrl: string;
     tierModels?: Record<string, string>;
     defaultTier?: string;
@@ -52,7 +52,7 @@ export type AiConfig = {
     quality: string;
     size: string;
     count: string;
-    modelTypes: Record<string, "image" | "video" | "parse" | "prompt">;
+    modelTypes: Record<string, "image" | "video" | "parse" | "prompt" | "detail_prompt">;
     modelSupportedSizes: Record<string, string[]>;
     modelTierOptions: Record<string, string[]>;
     modelDefaultTiers: Record<string, string>;
@@ -232,7 +232,7 @@ export function readUserModelConfig() {
     try {
         const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
         const selectedIds = new Set(parsed.modelIds || []);
-        const models = (parsed.models || []).filter((model) => model.type !== "prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
+        const models = (parsed.models || []).filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
         return { models, apiKeys: parsed.apiKeys || {} };
     } catch {
         return { models: [], apiKeys: {} as Record<string, string> };

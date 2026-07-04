@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { App, Button, Input, InputNumber, Modal, Select, Space, Tag } from "antd";
-import { Download, ImagePlus, LoaderCircle, RefreshCw, Settings2, Sparkles, Wand2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, LoaderCircle, Plus, RefreshCw, Settings2, Sparkles, Trash2, Wand2, X } from "lucide-react";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { requestEdit, requestGeneration } from "@/services/api/image";
-import { imageToDataUrl, uploadImage } from "@/services/image-storage";
+import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -42,7 +42,23 @@ type DetailScreen = DetailPlanScreen & {
 
 type DetailLlmKeys = Record<string, string>;
 
+type DetailProject = {
+    id: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+    references: DetailReference[];
+    productInfo: string;
+    styleRequest: string;
+    platform: string;
+    screenCount: number;
+    plan: DetailPlan | null;
+    screens: DetailScreen[];
+    currentIndex: number;
+};
+
 const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
+const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 const DEFAULT_SCREEN_COUNT = 6;
 
 export default function DetailWorkbenchPage() {
@@ -53,10 +69,15 @@ export default function DetailWorkbenchPage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
 
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [projects, setProjects] = useState<DetailProject[]>([]);
+    const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+    const [projectReady, setProjectReady] = useState(false);
     const [llmModels, setLlmModels] = useState<AdminModel[]>([]);
     const [llmKeys, setLlmKeys] = useState<DetailLlmKeys>({});
     const [selectedLlmId, setSelectedLlmId] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [imageSettingsOpen, setImageSettingsOpen] = useState(false);
     const [references, setReferences] = useState<DetailReference[]>([]);
     const [productInfo, setProductInfo] = useState("");
     const [styleRequest, setStyleRequest] = useState("");
@@ -78,19 +99,107 @@ export default function DetailWorkbenchPage() {
     useEffect(() => {
         void loadLlmModels();
         loadLlmKeys();
+        void loadProjects();
     }, []);
 
     useEffect(() => {
         if (!selectedLlmId && llmModels.length) setSelectedLlmId(llmModels[0].id);
     }, [llmModels, selectedLlmId]);
 
+    useEffect(() => {
+        if (!projectReady || !activeProjectId) return;
+        const now = new Date().toISOString();
+        setProjects((items) => {
+            const next = items.map((project) =>
+                project.id === activeProjectId
+                    ? {
+                          ...project,
+                          title: projectTitle(productInfo, project.title),
+                          updatedAt: now,
+                          references,
+                          productInfo,
+                          styleRequest,
+                          platform,
+                          screenCount,
+                          plan,
+                          screens,
+                          currentIndex,
+                      }
+                    : project,
+            );
+            scheduleProjectSave(next);
+            return next;
+        });
+    }, [projectReady, activeProjectId, references, productInfo, styleRequest, platform, screenCount, plan, screens, currentIndex]);
+
+    const scheduleProjectSave = (items: DetailProject[]) => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => {
+            localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(items));
+        }, 250);
+    };
+
     const loadLlmModels = async () => {
         try {
             const models = await fetchPublicModels();
-            setLlmModels(models.filter((model) => model.enabled && model.type === "prompt"));
+            setLlmModels(models.filter((model) => model.enabled && model.type === "detail_prompt"));
         } catch {
             message.error("加载 LLM 配置失败");
         }
+    };
+
+    const loadProjects = async () => {
+        try {
+            const stored = JSON.parse(localStorage.getItem(DETAIL_PROJECTS_KEY) || "[]") as DetailProject[];
+            const hydrated = await Promise.all(stored.map(hydrateProjectImages));
+            setProjects(hydrated);
+        } catch {
+            setProjects([]);
+        }
+    };
+
+    const createProject = () => {
+        const now = new Date().toISOString();
+        const project: DetailProject = {
+            id: `detail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            title: "未命名详情图",
+            createdAt: now,
+            updatedAt: now,
+            references: [],
+            productInfo: "",
+            styleRequest: "",
+            platform: "淘宝",
+            screenCount: DEFAULT_SCREEN_COUNT,
+            plan: null,
+            screens: [],
+            currentIndex: 1,
+        };
+        const next = [project, ...projects];
+        setProjects(next);
+        localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
+        openProject(project);
+    };
+
+    const openProject = (project: DetailProject) => {
+        setProjectReady(false);
+        setActiveProjectId(project.id);
+        setReferences(project.references || []);
+        setProductInfo(project.productInfo || "");
+        setStyleRequest(project.styleRequest || "");
+        setPlatform(project.platform || "淘宝");
+        setScreenCount(project.screenCount || DEFAULT_SCREEN_COUNT);
+        setPlan(project.plan || null);
+        setScreens(project.screens || []);
+        setCurrentIndex(project.currentIndex || 1);
+        setFeedback("");
+        window.setTimeout(() => setProjectReady(true), 0);
+    };
+
+    const deleteProject = (id: string) => {
+        const next = projects.filter((project) => project.id !== id);
+        setProjects(next);
+        localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
+        if (activeProjectId === id) setActiveProjectId(null);
     };
 
     const loadLlmKeys = () => {
@@ -132,7 +241,7 @@ export default function DetailWorkbenchPage() {
     const startDesign = async () => {
         if (!selectedLlm) {
             setSettingsOpen(true);
-            message.warning("请先在后台配置 ChatGPT 或 Claude 提示词模型");
+            message.warning("请先在后台配置详情图提示词模型");
             return;
         }
         if (!selectedLlmKey) {
@@ -197,6 +306,8 @@ export default function DetailWorkbenchPage() {
         }
 
         setIsRunning(true);
+        setStatusText(`正在修改第 ${currentScreen.index} 屏`);
+        setScreens((items) => patchScreen(items, currentScreen.index, { status: "generating", error: undefined }));
         try {
             if (currentScreen.index === 1) {
                 setStatusText("正在根据修改建议调整整体设计和第一屏");
@@ -211,24 +322,25 @@ export default function DetailWorkbenchPage() {
                     const old = screens.find((item) => item.index === screen.index);
                     return {
                         ...screen,
-                        imageUrl: screen.index === 1 ? undefined : old?.imageUrl,
-                        storageKey: screen.index === 1 ? undefined : old?.storageKey,
-                        status: screen.index === 1 ? ("not_started" as const) : old?.status || ("not_started" as const),
+                        imageUrl: old?.imageUrl,
+                        storageKey: old?.storageKey,
+                        status: screen.index === 1 ? ("generating" as const) : old?.status || ("not_started" as const),
                     };
                 });
                 setPlan(nextPlan);
                 setScreens(nextScreens);
-                await generateScreen(1, nextScreens, nextPlan);
+                await generateScreen(1, nextScreens, nextPlan, { includeCurrent: true });
             } else {
                 setStatusText(`正在局部改写第 ${currentScreen.index} 屏提示词`);
                 const prompt = await requestDetailLlm([{ role: "user", content: buildScreenRevisionPrompt(plan, currentScreen, feedback) }]);
-                const nextScreens = screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, prompt: cleanPromptText(prompt), imageUrl: undefined, storageKey: undefined, status: "not_started" as const } : screen));
+                const nextScreens = screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, prompt: cleanPromptText(prompt), status: "generating" as const } : screen));
                 setScreens(nextScreens);
-                await generateScreen(currentScreen.index, nextScreens, plan);
+                await generateScreen(currentScreen.index, nextScreens, plan, { includeCurrent: true });
             }
             setFeedback("");
             message.success("已按修改建议重新生成");
         } catch (error) {
+            setScreens((items) => patchScreen(items, currentScreen.index, { status: currentScreen.imageUrl ? "ready" : "failed", error: error instanceof Error ? error.message : "修改失败" }));
             message.error(error instanceof Error ? error.message : "修改失败");
         } finally {
             setIsRunning(false);
@@ -270,27 +382,45 @@ export default function DetailWorkbenchPage() {
         }
     };
 
-    const generateScreen = async (index: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan) => {
+    const generateScreen = async (index: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan, options?: { includeCurrent?: boolean }) => {
         const target = sourceScreens.find((screen) => screen.index === index);
         if (!target) throw new Error("未找到当前屏提示词");
         setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: "generating", error: undefined }));
-        const refs = await buildGenerationReferences(index, sourceScreens);
-        const prompt = buildImagePrompt(sourcePlan, target, index);
-        const images = refs.length ? await requestEdit(imageConfig, prompt, refs) : await requestGeneration(imageConfig, prompt);
-        const uploaded = await uploadImage(images[0].dataUrl);
-        setScreens((items) =>
-            patchScreen(items.length ? items : sourceScreens, index, {
-                imageUrl: uploaded.url,
-                storageKey: uploaded.storageKey,
-                status: "ready",
-                error: undefined,
-            }),
-        );
+        try {
+            const refs = await buildGenerationReferences(index, sourceScreens, options);
+            const prompt = buildImagePrompt(sourcePlan, target, index);
+            const images = refs.length ? await requestEdit(imageConfig, prompt, refs) : await requestGeneration(imageConfig, prompt);
+            const uploaded = await uploadImage(images[0].dataUrl);
+            setScreens((items) =>
+                patchScreen(items.length ? items : sourceScreens, index, {
+                    imageUrl: uploaded.url,
+                    storageKey: uploaded.storageKey,
+                    status: "ready",
+                    error: undefined,
+                }),
+            );
+        } catch (error) {
+            setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: target.imageUrl ? "ready" : "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            throw error;
+        }
     };
 
-    const buildGenerationReferences = async (index: number, sourceScreens: DetailScreen[]) => {
+    const buildGenerationReferences = async (index: number, sourceScreens: DetailScreen[], options?: { includeCurrent?: boolean }) => {
         const limit = imageReferenceLimit(imageConfig, imageConfig.model);
-        if (index === 1) return hydrateReferences(references.slice(0, limit));
+        const current = options?.includeCurrent ? sourceScreens.find((screen) => screen.index === index && screen.imageUrl && screen.storageKey) : null;
+        const currentReference = current
+            ? [
+                  {
+                      id: `screen-${current.index}-current`,
+                      name: `screen-${current.index}-current.png`,
+                      type: "image/png",
+                      dataUrl: current.imageUrl!,
+                      url: current.imageUrl!,
+                      storageKey: current.storageKey!,
+                  },
+              ]
+            : [];
+        if (index === 1) return hydrateReferences(uniqueReferences([...currentReference, ...references]).slice(0, limit));
         const first = sourceScreens.find((screen) => screen.index === 1 && screen.imageUrl && screen.storageKey);
         const previous = sourceScreens.find((screen) => screen.index === index - 1 && screen.imageUrl && screen.storageKey);
         const anchors: DetailReference[] = [first, previous]
@@ -303,7 +433,7 @@ export default function DetailWorkbenchPage() {
                 url: screen.imageUrl,
                 storageKey: screen.storageKey,
             }));
-        return hydrateReferences(uniqueReferences([...anchors, ...references]).slice(0, limit));
+        return hydrateReferences(uniqueReferences([...currentReference, ...anchors, ...references]).slice(0, limit));
     };
 
     const hydrateReferences = async (items: DetailReference[]) => {
@@ -349,6 +479,67 @@ export default function DetailWorkbenchPage() {
         updateConfig("size", normalizeImageSizeForModel(effectiveConfig, model, effectiveConfig.size || "auto"));
     };
 
+    if (!activeProjectId) {
+        return (
+            <main className="h-full overflow-y-auto bg-[#111111] p-6 text-stone-100">
+                <div className="mx-auto max-w-6xl">
+                    <div className="mb-6 flex items-center justify-between gap-4">
+                        <div>
+                            <h1 className="m-0 text-2xl font-semibold">详情图工作台</h1>
+                            <p className="mt-2 text-sm text-stone-400">每个项目都会保存在当前浏览器本地。</p>
+                        </div>
+                        <Button type="primary" size="large" icon={<Plus className="size-4" />} onClick={createProject}>
+                            新建详情图项目
+                        </Button>
+                    </div>
+                    {projects.length ? (
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                            {projects.map((project) => (
+                                <button key={project.id} type="button" className="group rounded-lg border border-white/10 bg-[#171717] p-4 text-left transition hover:border-white/30" onClick={() => openProject(project)}>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="truncate text-lg font-semibold">{project.title}</div>
+                                            <div className="mt-1 text-xs text-stone-500">{new Date(project.updatedAt).toLocaleString()}</div>
+                                        </div>
+                                        <span
+                                            role="button"
+                                            tabIndex={0}
+                                            className="grid size-8 shrink-0 place-items-center rounded-full text-stone-500 opacity-0 transition hover:bg-white/10 hover:text-red-300 group-hover:opacity-100"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                deleteProject(project.id);
+                                            }}
+                                        >
+                                            <Trash2 className="size-4" />
+                                        </span>
+                                    </div>
+                                    <div className="mt-4 flex gap-2">
+                                        {(project.references || []).slice(0, 4).map((reference) => (
+                                            <img key={reference.id} src={reference.url} alt="" className="size-14 rounded-md border border-white/10 object-cover" />
+                                        ))}
+                                        {project.references.length > 4 ? <div className="grid size-14 place-items-center rounded-md border border-white/10 text-xs text-stone-500">+{project.references.length - 4}</div> : null}
+                                    </div>
+                                    <div className="mt-4 flex flex-wrap gap-1.5">
+                                        <Tag>{project.platform}</Tag>
+                                        <Tag>{project.screenCount} 屏</Tag>
+                                        <Tag color={project.screens.some((screen) => screen.imageUrl) ? "success" : undefined}>{project.screens.filter((screen) => screen.imageUrl).length} 已生成</Tag>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="grid min-h-[420px] place-items-center rounded-lg border border-dashed border-white/10 bg-[#171717] text-center text-stone-500">
+                            <div>
+                                <Sparkles className="mx-auto mb-3 size-8 opacity-60" />
+                                还没有详情图项目
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </main>
+        );
+    }
+
     return (
         <main className="h-full overflow-hidden bg-[#111111] text-stone-100">
             <div className="grid h-full min-h-0 grid-cols-[360px_minmax(420px,1fr)_360px]">
@@ -358,7 +549,12 @@ export default function DetailWorkbenchPage() {
                             <div className="text-lg font-semibold">详情图工作台</div>
                             <div className="mt-1 text-xs text-stone-400">一次生成整套提示词，逐屏出图</div>
                         </div>
-                        <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
+                        <Space size={4}>
+                            <Button type="text" size="small" className="!text-stone-300" onClick={() => setActiveProjectId(null)}>
+                                项目
+                            </Button>
+                            <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
+                        </Space>
                     </div>
 
                     <div className="space-y-4">
@@ -376,24 +572,31 @@ export default function DetailWorkbenchPage() {
                             </div>
                         </Panel>
 
-                        <Panel title="参考图 / 竞品图">
-                            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-4 text-center text-sm text-stone-400 transition hover:border-white/35 hover:text-stone-200">
-                                <ImagePlus className="mb-2 size-5" />
-                                上传商品图、参考图或竞品图
-                                <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleReferenceFiles(event.target.files)} />
-                            </label>
-                            {references.length ? (
-                                <div className="mt-3 grid grid-cols-3 gap-2">
-                                    {references.map((item) => (
-                                        <div key={item.id} className="group relative aspect-square overflow-hidden rounded-md border border-white/10 bg-black">
-                                            <img src={item.url} alt="" className="h-full w-full object-cover" />
-                                            <button type="button" className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-black/70 opacity-0 transition group-hover:opacity-100" onClick={() => setReferences((list) => list.filter((image) => image.id !== item.id))}>
-                                                <X className="size-3.5" />
+                        <Panel title="参考图 / 竞品图顺序">
+                            <div className="thin-scrollbar flex gap-2 overflow-x-auto pb-1">
+                                {references.map((item, index) => (
+                                    <div key={item.id} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black">
+                                        <img src={item.url} alt="" className="h-full w-full object-cover" />
+                                        <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{index + 1}</span>
+                                        <div className="absolute inset-x-1 bottom-1 flex justify-between opacity-0 transition group-hover:opacity-100">
+                                            <button type="button" className="grid size-6 place-items-center rounded-full bg-black/70" disabled={index === 0} onClick={() => setReferences((list) => moveItem(list, index, index - 1))}>
+                                                <ChevronLeft className="size-3.5" />
+                                            </button>
+                                            <button type="button" className="grid size-6 place-items-center rounded-full bg-black/70" disabled={index === references.length - 1} onClick={() => setReferences((list) => moveItem(list, index, index + 1))}>
+                                                <ChevronRight className="size-3.5" />
                                             </button>
                                         </div>
-                                    ))}
-                                </div>
-                            ) : null}
+                                        <button type="button" className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-black/70 opacity-0 transition group-hover:opacity-100" onClick={() => setReferences((list) => list.filter((image) => image.id !== item.id))}>
+                                            <X className="size-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                <label className="grid h-20 w-20 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-white/20 bg-white/[0.03] text-stone-400 transition hover:border-white/40 hover:text-stone-100" title="添加参考图">
+                                    <Plus className="size-5" />
+                                    <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleReferenceFiles(event.target.files)} />
+                                </label>
+                            </div>
+                            <div className="mt-2 text-xs text-stone-500">顺序会传给 AI：越靠前优先级越高。</div>
                         </Panel>
 
                         <Panel title="商品信息与总体要求">
@@ -407,7 +610,11 @@ export default function DetailWorkbenchPage() {
 
                         <Panel title="生图模型">
                             <ModelPicker config={effectiveConfig} value={effectiveConfig.imageModel || effectiveConfig.model} onChange={setImageModel} onMissingConfig={() => openConfigDialog(true)} type="image" fullWidth />
-                            <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} className="mt-3 space-y-4" />
+                            <button type="button" className="mt-3 flex w-full items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-left text-sm text-stone-300 transition hover:border-white/25" onClick={() => setImageSettingsOpen((value) => !value)}>
+                                <span>画质、比例与张数</span>
+                                <ChevronDown className={cn("size-4 transition", imageSettingsOpen && "rotate-180")} />
+                            </button>
+                            {imageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} className="mt-3 space-y-4" /> : null}
                         </Panel>
 
                         <Button type="primary" size="large" block icon={isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning} onClick={() => void startDesign()}>
@@ -427,14 +634,14 @@ export default function DetailWorkbenchPage() {
                             {currentScreen?.status ? <Tag color={currentScreen.status === "ready" ? "success" : currentScreen.status === "generating" ? "processing" : currentScreen.status === "failed" ? "error" : "default"}>{screenStatusLabel(currentScreen.status)}</Tag> : null}
                         </div>
 
-                        <div className="grid min-h-[560px] place-items-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                        <div className="grid h-[640px] place-items-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
                             {currentScreen?.status === "generating" ? (
                                 <div className="flex flex-col items-center gap-3 text-stone-400">
                                     <LoaderCircle className="size-8 animate-spin" />
                                     正在生成图片
                                 </div>
                             ) : currentScreen?.imageUrl ? (
-                                <img src={currentScreen.imageUrl} alt="" className="max-h-[75vh] w-auto max-w-full object-contain" />
+                                <img src={currentScreen.imageUrl} alt="" className="h-full max-h-full w-full max-w-full object-contain" />
                             ) : (
                                 <div className="text-center text-sm text-stone-500">
                                     <Wand2 className="mx-auto mb-3 size-8 opacity-60" />
@@ -502,7 +709,7 @@ export default function DetailWorkbenchPage() {
                             </div>
                         ))
                     ) : (
-                        <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">后台模型管理里还没有启用的提示词模型</div>
+                        <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">后台模型管理里还没有启用的详情图提示词模型</div>
                     )}
                 </div>
             </Modal>
@@ -613,6 +820,43 @@ async function referenceMessageParts(references: DetailReference[]) {
             image_url: { url: await imageToDataUrl(reference) },
         })),
     );
+}
+
+async function hydrateProjectImages(project: DetailProject): Promise<DetailProject> {
+    const references = await Promise.all(
+        (project.references || []).map(async (reference) => ({
+            ...reference,
+            url: await resolveImageUrl(reference.storageKey, reference.url || reference.dataUrl || ""),
+            dataUrl: await resolveImageUrl(reference.storageKey, reference.dataUrl || reference.url || ""),
+        })),
+    );
+    const screens = await Promise.all(
+        (project.screens || []).map(async (screen) =>
+            screen.storageKey
+                ? {
+                      ...screen,
+                      imageUrl: await resolveImageUrl(screen.storageKey, screen.imageUrl || ""),
+                  }
+                : screen,
+        ),
+    );
+    return { ...project, references, screens };
+}
+
+function projectTitle(productInfo: string, fallback: string) {
+    const firstLine = productInfo
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+    return firstLine?.slice(0, 24) || fallback || "未命名详情图";
+}
+
+function moveItem<T>(items: T[], from: number, to: number) {
+    if (to < 0 || to >= items.length) return items;
+    const next = [...items];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    return next;
 }
 
 function parsePlan(content: string): DetailPlan {

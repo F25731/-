@@ -8,13 +8,14 @@ import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from
 import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
-type ModelType = "image" | "video" | "parse" | "prompt";
+type ModelType = "image" | "video" | "parse" | "prompt" | "detail_prompt";
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片分组",
     video: "视频模型",
     parse: "解析模型",
-    prompt: "提示词模型",
+    prompt: "提示词提取",
+    detail_prompt: "详情图提示词",
 };
 
 const modelTypeColors: Record<ModelType, string> = {
@@ -22,6 +23,7 @@ const modelTypeColors: Record<ModelType, string> = {
     video: "purple",
     parse: "green",
     prompt: "orange",
+    detail_prompt: "cyan",
 };
 
 const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
@@ -122,7 +124,7 @@ export default function ModelsPage() {
                                 模型管理
                             </Typography.Title>
                             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                                图片按分组配置请求地址、清晰度模型、支持比例和参考图数量；提示词模型可配置 ChatGPT、Claude 等 LLM 请求地址和模型。
+                                图片按分组配置请求地址、清晰度模型、支持比例和参考图数量；详情图提示词用于配置 ChatGPT、Claude 等 LLM 请求地址和模型。
                             </Typography.Text>
                         </div>
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
@@ -209,7 +211,8 @@ export default function ModelsPage() {
                                 { label: "图片分组", value: "image" },
                                 { label: "视频模型", value: "video" },
                                 { label: "解析模型", value: "parse" },
-                                { label: "提示词模型", value: "prompt" },
+                                { label: "提示词提取", value: "prompt" },
+                                { label: "详情图提示词", value: "detail_prompt" },
                             ]}
                         />
                     </Form.Item>
@@ -258,9 +261,10 @@ export default function ModelsPage() {
                                 <Form.Item
                                     name="apiKey"
                                     label="后台专用 API Key"
-                                    extra={editingModel?.hasApiKey ? "已保存后台默认密钥；留空表示继续使用原密钥。详情图工作台也支持客户在前台独立填写自己的密钥。" : "可选。留空时，详情图工作台由客户在前台独立填写自己的密钥。"}
+                                    rules={editingModel?.hasApiKey ? [] : [{ required: true, message: "请输入后台专用 API Key" }]}
+                                    extra={editingModel?.hasApiKey ? "已保存密钥；留空表示继续使用原密钥。这个模型只用于图片提取提示词。" : "必填。这个模型只用于图片提取提示词。"}
                                 >
-                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "可留空"} />
+                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "sk-..."} />
                                 </Form.Item>
                             ) : null}
                         </>

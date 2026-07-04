@@ -239,7 +239,7 @@ export type AdminModel = {
     id: string;
     name: string;
     modelId: string;
-    type: "image" | "video" | "parse" | "prompt";
+    type: "image" | "video" | "parse" | "prompt" | "detail_prompt";
     apiUrl: string;
     apiKey?: string;
     hasApiKey?: boolean;

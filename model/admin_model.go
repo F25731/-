@@ -7,6 +7,7 @@ const (
 	AdminModelTypeVideo AdminModelType = "video"
 	AdminModelTypeParse AdminModelType = "parse"
 	AdminModelTypePrompt AdminModelType = "prompt"
+	AdminModelTypeDetailPrompt AdminModelType = "detail_prompt"
 )
 
 // AdminModel 后台可配置的模型。

@@ -13,6 +13,7 @@ const modelTypeLabels: Record<AdminModel["type"], string> = {
     video: "视频模型",
     parse: "解析模型",
     prompt: "提示词模型",
+    detail_prompt: "详情图提示词",
 };
 
 const modelTypeColors: Record<AdminModel["type"], string> = {
@@ -20,6 +21,7 @@ const modelTypeColors: Record<AdminModel["type"], string> = {
     video: "purple",
     parse: "green",
     prompt: "orange",
+    detail_prompt: "cyan",
 };
 
 export function AppConfigModal() {
@@ -42,7 +44,7 @@ export function AppConfigModal() {
     const loadModels = async () => {
         try {
             const data = await fetchPublicModels();
-            setModels(data.filter((model) => model.enabled && model.type !== "prompt"));
+            setModels(data.filter((model) => model.enabled && model.type !== "prompt" && model.type !== "detail_prompt"));
         } catch {
             message.error("加载模型列表失败");
         }

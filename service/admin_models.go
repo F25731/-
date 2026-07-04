@@ -50,6 +50,9 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	if item.ModelID == "" && item.Type != model.AdminModelTypeImage {
 		item.ModelID = item.Name
 	}
+	if item.Type == model.AdminModelTypePrompt && item.APIKey == "" && item.ID == "" {
+		return model.AdminModel{}, safeMessageError{message: "提示词提取模型需要配置后台 API Key"}
+	}
 	if item.Type != model.AdminModelTypePrompt {
 		item.APIKey = ""
 	}
@@ -143,6 +146,9 @@ func selectPromptModel() (model.AdminModel, error) {
 func publicAdminModels(items []model.AdminModel) []model.AdminModel {
 	result := make([]model.AdminModel, 0, len(items))
 	for _, item := range items {
+		if item.Type == model.AdminModelTypePrompt {
+			continue
+		}
 		item.APIKey = ""
 		item.HasAPIKey = false
 		result = append(result, item)
