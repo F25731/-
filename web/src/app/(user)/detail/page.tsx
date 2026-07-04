@@ -509,7 +509,8 @@ export default function DetailWorkbenchPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ baseUrl: selectedLlm.apiUrl, apiKey: selectedLlmKey, model: modelId, messages }),
         });
-        const payload = (await response.json()) as { code: number; data?: string; msg?: string };
+        const responseText = await response.text();
+        const payload = parseDetailLlmResponse(responseText);
         if (!response.ok || payload.code !== 0 || !payload.data) throw new Error(payload.msg || "LLM 请求失败");
         return payload.data;
     };
@@ -993,6 +994,19 @@ function extractJSON(content: string) {
 
 function cleanPromptText(text: string) {
     return text.replace(/^```[\s\S]*?\n?|\n?```$/g, "").trim();
+}
+
+function parseDetailLlmResponse(text: string): { code: number; data?: string; msg?: string } {
+    try {
+        return JSON.parse(text) as { code: number; data?: string; msg?: string };
+    } catch {
+        const compact = text.replace(/\s+/g, " ").trim();
+        const looksLikeHtml = compact.startsWith("<") || compact.toLowerCase().includes("<html");
+        return {
+            code: 1,
+            msg: looksLikeHtml ? "详情图提示词接口返回了网页内容，请检查部署是否最新、反向代理是否正确转发 /api/detail-llm，或后台请求地址是否填成了网页地址。" : compact.slice(0, 160) || "详情图提示词接口返回格式异常",
+        };
+    }
 }
 
 function patchScreen(screens: DetailScreen[], index: number, patch: Partial<DetailScreen>) {

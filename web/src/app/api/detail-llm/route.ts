@@ -27,18 +27,23 @@ export async function POST(request: NextRequest) {
 
     const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     const upstream = `${apiBaseUrl}/chat/completions`;
-    const response = await fetch(upstream, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            model,
-            messages: payload.messages || [],
-            temperature: 0.7,
-        }),
-    });
+    let response: Response;
+    try {
+        response = await fetch(upstream, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model,
+                messages: payload.messages || [],
+                temperature: 0.7,
+            }),
+        });
+    } catch (error) {
+        return Response.json({ code: 1, data: null, msg: `LLM 请求地址无法访问：${error instanceof Error ? error.message : "网络错误"}` }, { status: 502 });
+    }
 
     const text = await response.text();
     const data = parseJSON(text);
