@@ -70,6 +70,7 @@ export default function DetailWorkbenchPage() {
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeProjectIdRef = useRef<string | null>(null);
     const [projects, setProjects] = useState<DetailProject[]>([]);
     const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
     const [projectReady, setProjectReady] = useState(false);
@@ -108,6 +109,21 @@ export default function DetailWorkbenchPage() {
     useEffect(() => {
         if (!selectedLlmId && llmModels.length) setSelectedLlmId(llmModels[0].id);
     }, [llmModels, selectedLlmId]);
+
+    useEffect(() => {
+        activeProjectIdRef.current = activeProjectId;
+    }, [activeProjectId]);
+
+    useEffect(() => {
+        const handlePopState = (event: PopStateEvent) => {
+            if (activeProjectIdRef.current && !event.state?.detailWorkbenchProjectId) {
+                setActiveProjectId(null);
+                setProjectReady(false);
+            }
+        };
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, []);
 
     useEffect(() => {
         if (!projectReady || !activeProjectId) return;
@@ -206,7 +222,25 @@ export default function DetailWorkbenchPage() {
         });
     };
 
-    const openProject = (project: DetailProject) => {
+    const pushProjectHistory = (projectId: string) => {
+        const state = window.history.state || {};
+        if (state.detailWorkbenchProjectId === projectId) return;
+        window.history.pushState({ ...state, detailWorkbenchProjectId: projectId }, "", window.location.href);
+    };
+
+    const closeProjectList = () => {
+        setActiveProjectId(null);
+        setProjectReady(false);
+        const state = window.history.state || {};
+        if (state.detailWorkbenchProjectId) {
+            const nextState = { ...state };
+            delete nextState.detailWorkbenchProjectId;
+            window.history.replaceState(nextState, "", window.location.href);
+        }
+    };
+
+    const openProject = (project: DetailProject, options: { pushHistory?: boolean } = {}) => {
+        if (options.pushHistory !== false) pushProjectHistory(project.id);
         setProjectReady(false);
         setActiveProjectId(project.id);
         setReferences(project.references || []);
@@ -225,7 +259,7 @@ export default function DetailWorkbenchPage() {
         const next = projects.filter((project) => project.id !== id);
         setProjects(next);
         localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
-        if (activeProjectId === id) setActiveProjectId(null);
+        if (activeProjectId === id) closeProjectList();
     };
 
     const loadLlmKeys = () => {
@@ -576,7 +610,7 @@ export default function DetailWorkbenchPage() {
                             <div className="mt-1 text-xs text-stone-400">一次生成整套提示词，逐屏出图</div>
                         </div>
                         <Space size={4}>
-                            <Button type="text" size="small" className="!text-stone-300" onClick={() => setActiveProjectId(null)}>
+                            <Button type="text" size="small" className="!text-stone-300" onClick={closeProjectList}>
                                 项目
                             </Button>
                             <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
