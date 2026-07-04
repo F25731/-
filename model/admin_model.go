@@ -23,6 +23,7 @@ type AdminModel struct {
 	SupportedSizes []string          `json:"supportedSizes" gorm:"serializer:json"`
 	ReferenceLimit int               `json:"referenceLimit"`
 	HasAPIKey      bool              `json:"hasApiKey" gorm:"-"`
+	IsDefault      bool              `json:"isDefault" gorm:"index"`
 	Enabled        bool              `json:"enabled"`
 	Remark         string            `json:"remark"`
 	CreatedAt      string            `json:"createdAt"`

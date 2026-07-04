@@ -41,6 +41,14 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	return item, db.Save(&item).Error
 }
 
+func ClearAdminModelDefaults(modelType model.AdminModelType, exceptID string) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Model(&model.AdminModel{}).Where("type = ? AND id <> ?", modelType, exceptID).Update("is_default", false).Error
+}
+
 func DeleteAdminModel(id string) error {
 	db, err := DB()
 	if err != nil {

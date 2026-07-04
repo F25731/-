@@ -247,6 +247,7 @@ export type AdminModel = {
     defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
+    isDefault?: boolean;
     enabled: boolean;
     remark: string;
 };

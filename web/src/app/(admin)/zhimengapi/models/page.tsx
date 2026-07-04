@@ -59,10 +59,10 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4 });
+            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4, isDefault: Boolean(model.isDefault) });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4 });
+            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, isDefault: false });
         }
     };
 
@@ -172,6 +172,12 @@ export default function ModelsPage() {
                                 render: (value: boolean) => <Tag color={value ? "success" : "default"}>{value ? "已启用" : "已停用"}</Tag>,
                             },
                             {
+                                title: "默认",
+                                dataIndex: "isDefault",
+                                width: 90,
+                                render: (value: boolean, record) => (record.type === "detail_prompt" && value ? <Tag color="blue">默认</Tag> : "-"),
+                            },
+                            {
                                 title: "操作",
                                 key: "actions",
                                 width: 150,
@@ -267,6 +273,16 @@ export default function ModelsPage() {
                                     <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "sk-..."} />
                                 </Form.Item>
                             ) : null}
+                            {currentType === "detail_prompt" ? (
+                                <Form.Item name="isDefault" label="设为默认详情图提示词模型" extra="前台详情图工作台会默认选中这个模型；同一时间只会保留一个默认。">
+                                    <Select
+                                        options={[
+                                            { label: "设为默认", value: true },
+                                            { label: "不设为默认", value: false },
+                                        ]}
+                                    />
+                                </Form.Item>
+                            ) : null}
                         </>
                     )}
 
@@ -305,7 +321,7 @@ function TierModelSummary({ model }: { model: AdminModel }) {
 
 function normalizeModelPayload(values: AdminModel) {
     if (values.type !== "image") {
-        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, defaultTier: "", supportedSizes: [], referenceLimit: 4 };
+        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, defaultTier: "", supportedSizes: [], referenceLimit: 4, isDefault: values.type === "detail_prompt" ? Boolean(values.isDefault) : false };
     }
     const tierModels: Record<string, string> = Object.fromEntries(Object.entries(values.tierModels || {}).map(([key, value]) => [key, String(value || "").trim()]).filter(([, value]) => value));
     const defaultTier = tierModels[String(values.defaultTier || "")] ? String(values.defaultTier) : firstConfiguredTier(tierModels);
@@ -317,6 +333,7 @@ function normalizeModelPayload(values: AdminModel) {
         defaultTier,
         supportedSizes: values.supportedSizes?.length ? values.supportedSizes : ["auto"],
         referenceLimit: Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))),
+        isDefault: false,
     };
 }
 

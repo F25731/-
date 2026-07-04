@@ -56,6 +56,9 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	if item.Type != model.AdminModelTypePrompt {
 		item.APIKey = ""
 	}
+	if item.Type != model.AdminModelTypeDetailPrompt || !item.Enabled {
+		item.IsDefault = false
+	}
 	if item.ID == "" {
 		item.ID = newID("model")
 		item.CreatedAt = now
@@ -64,6 +67,11 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	saved, err := repository.SaveAdminModel(item)
 	if err != nil {
 		return model.AdminModel{}, err
+	}
+	if saved.Type == model.AdminModelTypeDetailPrompt && saved.IsDefault {
+		if err := repository.ClearAdminModelDefaults(saved.Type, saved.ID); err != nil {
+			return model.AdminModel{}, err
+		}
 	}
 	return safeAdminModel(saved), nil
 }

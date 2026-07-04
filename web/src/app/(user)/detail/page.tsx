@@ -160,7 +160,8 @@ export default function DetailWorkbenchPage() {
     const loadLlmModels = async () => {
         try {
             const models = await fetchPublicModels();
-            setLlmModels(models.filter((model) => model.enabled && model.type === "detail_prompt"));
+            const detailModels = models.filter((model) => model.enabled && model.type === "detail_prompt").sort((left, right) => Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault)));
+            setLlmModels(detailModels);
         } catch {
             message.error("加载 LLM 配置失败");
         }
@@ -541,12 +542,12 @@ export default function DetailWorkbenchPage() {
 
     if (!activeProjectId) {
         return (
-            <main className="h-full overflow-y-auto bg-[#111111] p-6 text-stone-100">
+            <main className="h-full overflow-y-auto bg-stone-50 p-6 text-stone-950 dark:bg-[#111111] dark:text-stone-100">
                 <div className="mx-auto max-w-6xl">
                     <div className="mb-6 flex items-center justify-between gap-4">
                         <div>
                             <h1 className="m-0 text-2xl font-semibold">详情图工作台</h1>
-                            <p className="mt-2 text-sm text-stone-400">每个项目都会保存在当前浏览器本地。</p>
+                            <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">每个项目都会保存在当前浏览器本地。</p>
                         </div>
                         <Button type="primary" size="large" icon={<Plus className="size-4" />} onClick={openCreateProjectDialog}>
                             新建详情图项目
@@ -555,16 +556,16 @@ export default function DetailWorkbenchPage() {
                     {projects.length ? (
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                             {projects.map((project) => (
-                                <button key={project.id} type="button" className="group rounded-lg border border-white/10 bg-[#171717] p-4 text-left transition hover:border-white/30" onClick={() => openProject(project)}>
+                                <button key={project.id} type="button" className="group rounded-lg border border-stone-200 bg-white p-4 text-left transition hover:border-stone-400 dark:border-white/10 dark:bg-[#171717] dark:hover:border-white/30" onClick={() => openProject(project)}>
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                             <div className="truncate text-lg font-semibold">{project.title || "未命名详情图"}</div>
-                                            <div className="mt-1 text-xs text-stone-500">{new Date(project.updatedAt).toLocaleString()}</div>
+                                            <div className="mt-1 text-xs text-stone-500 dark:text-stone-500">{new Date(project.updatedAt).toLocaleString()}</div>
                                         </div>
                                         <span
                                             role="button"
                                             tabIndex={0}
-                                            className="grid size-8 shrink-0 place-items-center rounded-full text-stone-500 opacity-0 transition hover:bg-white/10 hover:text-red-300 group-hover:opacity-100"
+                                            className="grid size-8 shrink-0 place-items-center rounded-full text-stone-500 opacity-0 transition hover:bg-stone-100 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-white/10 dark:hover:text-red-300"
                                             onClick={(event) => {
                                                 event.stopPropagation();
                                                 deleteProject(project.id);
@@ -575,9 +576,9 @@ export default function DetailWorkbenchPage() {
                                     </div>
                                     <div className="mt-4 flex gap-2">
                                         {(project.references || []).slice(0, 4).map((reference) => (
-                                            <img key={reference.id} src={reference.url} alt="" className="size-14 rounded-md border border-white/10 object-cover" />
+                                            <img key={reference.id} src={reference.url} alt="" className="size-14 rounded-md border border-stone-200 object-cover dark:border-white/10" />
                                         ))}
-                                        {project.references.length > 4 ? <div className="grid size-14 place-items-center rounded-md border border-white/10 text-xs text-stone-500">+{project.references.length - 4}</div> : null}
+                                        {project.references.length > 4 ? <div className="grid size-14 place-items-center rounded-md border border-stone-200 text-xs text-stone-500 dark:border-white/10">+{project.references.length - 4}</div> : null}
                                     </div>
                                     <div className="mt-4 flex flex-wrap gap-1.5">
                                         <Tag>{project.platform}</Tag>
@@ -588,7 +589,7 @@ export default function DetailWorkbenchPage() {
                             ))}
                         </div>
                     ) : (
-                        <div className="grid min-h-[420px] place-items-center rounded-lg border border-dashed border-white/10 bg-[#171717] text-center text-stone-500">
+                        <div className="grid min-h-[420px] place-items-center rounded-lg border border-dashed border-stone-300 bg-white text-center text-stone-500 dark:border-white/10 dark:bg-[#171717]">
                             <div>
                                 <Sparkles className="mx-auto mb-3 size-8 opacity-60" />
                                 还没有详情图项目
@@ -601,19 +602,19 @@ export default function DetailWorkbenchPage() {
     }
 
     return (
-        <main className="h-full overflow-hidden bg-[#111111] text-stone-100">
+        <main className="h-full overflow-hidden bg-stone-50 text-stone-950 dark:bg-[#111111] dark:text-stone-100">
             <div className="grid h-full min-h-0 grid-cols-[360px_minmax(420px,1fr)_360px]">
-                <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-[#171717] p-4">
+                <aside className="min-h-0 overflow-y-auto border-r border-stone-200 bg-white p-4 dark:border-white/10 dark:bg-[#171717]">
                     <div className="mb-4 flex items-center justify-between gap-3">
                         <div>
                             <div className="text-lg font-semibold">详情图工作台</div>
-                            <div className="mt-1 text-xs text-stone-400">一次生成整套提示词，逐屏出图</div>
+                            <div className="mt-1 text-xs text-stone-600 dark:text-stone-400">一次生成整套提示词，逐屏出图</div>
                         </div>
                         <Space size={4}>
-                            <Button type="text" size="small" className="!text-stone-300" onClick={closeProjectList}>
+                            <Button type="text" size="small" className="!text-stone-700 dark:!text-stone-300" onClick={closeProjectList}>
                                 项目
                             </Button>
-                            <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
+                            <Button type="text" shape="circle" icon={<Settings2 className="size-4" />} className="!text-stone-700 dark:!text-stone-200" onClick={() => setSettingsOpen(true)} title="详情图 LLM Key 设置" />
                         </Space>
                     </div>
                     <Input
@@ -644,7 +645,7 @@ export default function DetailWorkbenchPage() {
                         <Panel title="参考图 / 竞品图顺序">
                             <div className="thin-scrollbar flex gap-2 overflow-x-auto pb-1">
                                 {references.map((item, index) => (
-                                    <div key={item.id} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black">
+                                    <div key={item.id} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-white/10">
                                         <img src={item.url} alt="" className="h-full w-full object-cover" />
                                         <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{index + 1}</span>
                                         <div className="absolute inset-x-1 bottom-1 flex justify-between opacity-0 transition group-hover:opacity-100">
@@ -660,12 +661,12 @@ export default function DetailWorkbenchPage() {
                                         </button>
                                     </div>
                                 ))}
-                                <label className="grid h-20 w-20 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-white/20 bg-white/[0.03] text-stone-400 transition hover:border-white/40 hover:text-stone-100" title="添加参考图">
+                                <label className="grid h-20 w-20 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-stone-300 bg-stone-50 text-stone-500 transition hover:border-stone-500 hover:text-stone-900 dark:border-white/20 dark:bg-white/[0.03] dark:text-stone-400 dark:hover:border-white/40 dark:hover:text-stone-100" title="添加参考图">
                                     <Plus className="size-5" />
                                     <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleReferenceFiles(event.target.files)} />
                                 </label>
                             </div>
-                            <div className="mt-2 text-xs text-stone-500">顺序会传给 AI：越靠前优先级越高。</div>
+                            <div className="mt-2 text-xs text-stone-500 dark:text-stone-500">顺序会传给 AI：越靠前优先级越高。</div>
                         </Panel>
 
                         <Panel title="商品信息与总体要求">
@@ -679,7 +680,7 @@ export default function DetailWorkbenchPage() {
 
                         <Panel title="生图模型">
                             <ModelPicker config={effectiveConfig} value={effectiveConfig.imageModel || effectiveConfig.model} onChange={setImageModel} onMissingConfig={() => openConfigDialog(true)} type="image" fullWidth />
-                            <button type="button" className="mt-3 flex w-full items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-left text-sm text-stone-300 transition hover:border-white/25" onClick={() => setImageSettingsOpen((value) => !value)}>
+                            <button type="button" className="mt-3 flex w-full items-center justify-between rounded-lg border border-stone-200 px-3 py-2 text-left text-sm text-stone-700 transition hover:border-stone-400 dark:border-white/10 dark:text-stone-300 dark:hover:border-white/25" onClick={() => setImageSettingsOpen((value) => !value)}>
                                 <span>画质、比例与张数</span>
                                 <ChevronDown className={cn("size-4 transition", imageSettingsOpen && "rotate-180")} />
                             </button>
@@ -689,44 +690,44 @@ export default function DetailWorkbenchPage() {
                         <Button type="primary" size="large" block icon={isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning} onClick={() => void startDesign()}>
                             开始设计并生成第一屏
                         </Button>
-                        {statusText ? <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-stone-300">{statusText}</div> : null}
+                        {statusText ? <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300">{statusText}</div> : null}
                     </div>
                 </aside>
 
-                <section className="min-h-0 overflow-y-auto bg-[#101010] p-5">
+                <section className="min-h-0 overflow-y-auto bg-stone-100 p-5 dark:bg-[#101010]">
                     <div className="mx-auto flex max-w-3xl flex-col gap-4">
                         <div className="flex items-center justify-between gap-3">
                             <div>
                                 <div className="text-lg font-semibold">{currentScreen ? `第 ${currentScreen.index} 屏：${currentScreen.title}` : "当前屏"}</div>
-                                <div className="mt-1 text-xs text-stone-400">{currentScreen?.goal || "左侧输入商品信息后，系统会直接生成第一屏"}</div>
+                                <div className="mt-1 text-xs text-stone-600 dark:text-stone-400">{currentScreen?.goal || "左侧输入商品信息后，系统会直接生成第一屏"}</div>
                             </div>
                             {currentScreen?.status ? <Tag color={currentScreen.status === "ready" ? "success" : currentScreen.status === "generating" ? "processing" : currentScreen.status === "failed" ? "error" : "default"}>{screenStatusLabel(currentScreen.status)}</Tag> : null}
                         </div>
 
-                        <div className="flex h-[640px] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40 p-4">
+                        <div className="flex h-[640px] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border border-stone-200 bg-white p-4 dark:border-white/10 dark:bg-black/40">
                             {currentScreen?.status === "generating" ? (
-                                <div className="flex flex-col items-center gap-3 text-stone-400">
+                                <div className="flex flex-col items-center gap-3 text-stone-500 dark:text-stone-400">
                                     <LoaderCircle className="size-8 animate-spin" />
                                     正在生成图片
                                 </div>
                             ) : currentScreen?.imageUrl ? (
                                 <img src={currentScreen.imageUrl} alt="" className="block max-h-full max-w-full rounded-md object-contain" draggable={false} />
                             ) : (
-                                <div className="text-center text-sm text-stone-500">
+                                <div className="text-center text-sm text-stone-500 dark:text-stone-500">
                                     <Wand2 className="mx-auto mb-3 size-8 opacity-60" />
                                     等待生成第一屏
                                 </div>
                             )}
                         </div>
 
-                        <div className="rounded-lg border border-white/10 bg-[#171717] p-3">
-                            <div className="mb-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                        <div className="rounded-lg border border-stone-200 bg-white p-3 dark:border-white/10 dark:bg-[#171717]">
+                            <div className="mb-3 rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <div className="min-w-24 text-sm font-medium text-stone-200">生图模型</div>
+                                    <div className="min-w-24 text-sm font-medium text-stone-800 dark:text-stone-200">生图模型</div>
                                     <div className="min-w-[220px] flex-1">
                                         <ModelPicker config={effectiveConfig} value={effectiveConfig.imageModel || effectiveConfig.model} onChange={setImageModel} onMissingConfig={() => openConfigDialog(true)} type="image" fullWidth />
                                     </div>
-                                    <button type="button" className="flex h-8 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-stone-300 transition hover:border-white/25" onClick={() => setCenterImageSettingsOpen((value) => !value)}>
+                                    <button type="button" className="flex h-8 items-center gap-1.5 rounded-full border border-stone-200 px-3 text-xs text-stone-700 transition hover:border-stone-400 dark:border-white/10 dark:text-stone-300 dark:hover:border-white/25" onClick={() => setCenterImageSettingsOpen((value) => !value)}>
                                         <span>画质与比例</span>
                                         <ChevronDown className={cn("size-3.5 transition", centerImageSettingsOpen && "rotate-180")} />
                                     </button>
@@ -753,37 +754,37 @@ export default function DetailWorkbenchPage() {
                                 type="button"
                                 className={cn(
                                     "flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition",
-                                    generatingScreen.index === currentIndex ? "border-blue-400/40 bg-blue-500/10 text-blue-100" : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-blue-400/50 hover:text-blue-100",
+                                    generatingScreen.index === currentIndex ? "border-blue-400/60 bg-blue-500/10 text-blue-700 dark:border-blue-400/40 dark:text-blue-100" : "border-stone-200 bg-white text-stone-700 hover:border-blue-400/50 hover:text-blue-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300 dark:hover:text-blue-100",
                                 )}
                                 onClick={() => setCurrentIndex(generatingScreen.index)}
                             >
                                 <LoaderCircle className="size-4 animate-spin" />
                                 <span>正在生成第 {generatingScreen.index} 屏</span>
-                                {generatingScreen.index === currentIndex ? <span className="text-xs text-blue-200/70">当前查看中</span> : <span className="text-xs text-blue-200/70">点击切回当前生成屏</span>}
+                                {generatingScreen.index === currentIndex ? <span className="text-xs text-blue-500 dark:text-blue-200/70">当前查看中</span> : <span className="text-xs text-blue-500 dark:text-blue-200/70">点击切回当前生成屏</span>}
                             </button>
                         ) : null}
                     </div>
                 </section>
 
-                <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-[#171717] p-4">
+                <aside className="min-h-0 overflow-y-auto border-l border-stone-200 bg-white p-4 dark:border-white/10 dark:bg-[#171717]">
                     <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
                             <div className="font-semibold">实时长图预览</div>
-                            <div className="mt-1 text-xs text-stone-400">{generatedScreens.length ? `${generatedScreens.length} 屏已生成` : "生成后自动拼接"}</div>
+                            <div className="mt-1 text-xs text-stone-600 dark:text-stone-400">{generatedScreens.length ? `${generatedScreens.length} 屏已生成` : "生成后自动拼接"}</div>
                         </div>
                         <Button size="small" icon={<Download className="size-4" />} disabled={!generatedScreens.length} onClick={() => void exportLongImage()}>
                             导出
                         </Button>
                     </div>
-                    <div className="overflow-hidden rounded-md border border-white/10 bg-black">
+                    <div className="overflow-hidden rounded-md border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-black">
                         {generatedScreens.length ? (
                             generatedScreens.map((screen) => (
-                                <button key={screen.index} type="button" className={cn("block w-full cursor-pointer border-0 bg-transparent p-0", screen.index === currentIndex && "ring-2 ring-inset ring-white/80")} onClick={() => setCurrentIndex(screen.index)}>
+                                <button key={screen.index} type="button" className={cn("block w-full cursor-pointer border-0 bg-transparent p-0", screen.index === currentIndex && "ring-2 ring-inset ring-stone-900/80 dark:ring-white/80")} onClick={() => setCurrentIndex(screen.index)}>
                                     <img src={screen.imageUrl} alt="" className="block w-full border-0 p-0" style={{ margin: 0 }} />
                                 </button>
                             ))
                         ) : (
-                            <div className="grid min-h-96 place-items-center px-6 text-center text-sm text-stone-500">暂无预览</div>
+                            <div className="grid min-h-96 place-items-center px-6 text-center text-sm text-stone-500 dark:text-stone-500">暂无预览</div>
                         )}
                     </div>
                 </aside>
@@ -815,8 +816,8 @@ export default function DetailWorkbenchPage() {
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
     return (
-        <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
-            <div className="mb-2 text-sm font-medium text-stone-200">{title}</div>
+        <section className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-white/[0.035]">
+            <div className="mb-2 text-sm font-medium text-stone-800 dark:text-stone-200">{title}</div>
             {children}
         </section>
     );
