@@ -122,7 +122,7 @@ export default function ModelsPage() {
                                 模型管理
                             </Typography.Title>
                             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                                图片按分组配置请求地址、清晰度模型、支持比例和参考图数量；视频/解析/提示词仍按单模型配置。
+                                图片按分组配置请求地址、清晰度模型、支持比例和参考图数量；提示词模型可配置 ChatGPT、Claude 等 LLM 请求地址和模型。
                             </Typography.Text>
                         </div>
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
@@ -258,10 +258,9 @@ export default function ModelsPage() {
                                 <Form.Item
                                     name="apiKey"
                                     label="后台专用 API Key"
-                                    rules={editingModel?.hasApiKey ? [] : [{ required: true, message: "请输入后台专用 API Key" }]}
-                                    extra={editingModel?.hasApiKey ? "已保存密钥；留空表示继续使用原密钥。" : "用户无需填写，提示词工作台会免费使用这个密钥。"}
+                                    extra={editingModel?.hasApiKey ? "已保存后台默认密钥；留空表示继续使用原密钥。详情图工作台也支持客户在前台独立填写自己的密钥。" : "可选。留空时，详情图工作台由客户在前台独立填写自己的密钥。"}
                                 >
-                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "sk-..."} />
+                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "可留空"} />
                                 </Form.Item>
                             ) : null}
                         </>
