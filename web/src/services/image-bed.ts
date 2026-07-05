@@ -12,6 +12,7 @@ type ImageBedUploadResponse = {
 };
 
 const IMAGE_BED_CACHE_KEY = "infinite-canvas:image-bed-reference-urls:v1";
+const remoteUploadPromises = new Map<string, Promise<string>>();
 
 export function isRemoteImageUrl(value?: string) {
     return /^https?:\/\//i.test(String(value || ""));
@@ -36,9 +37,18 @@ export async function ensureReferenceImageRemoteUrl(image: ReferenceImage): Prom
     const cached = readCachedUrl(cacheKey);
     if (cached) return { ...image, remoteUrl: cached };
 
-    const remoteUrl = await uploadReferenceBlobToImageBed(await referenceImageBlob(image), image.name || "reference.png");
-    writeCachedUrl(cacheKey, remoteUrl);
-    return { ...image, remoteUrl };
+    const inflight = cacheKey ? remoteUploadPromises.get(cacheKey) : undefined;
+    if (inflight) return { ...image, remoteUrl: await inflight };
+
+    const upload = (async () => uploadReferenceBlobToImageBed(await referenceImageBlob(image), image.name || "reference.png"))();
+    if (cacheKey) remoteUploadPromises.set(cacheKey, upload);
+    try {
+        const remoteUrl = await upload;
+        writeCachedUrl(cacheKey, remoteUrl);
+        return { ...image, remoteUrl };
+    } finally {
+        if (cacheKey) remoteUploadPromises.delete(cacheKey);
+    }
 }
 
 export async function uploadReferenceImage(input: File | Blob): Promise<UploadedImage & { remoteUrl: string }> {

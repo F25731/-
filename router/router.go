@@ -21,6 +21,7 @@ func New() *gin.Engine {
 	api.GET("/auth/linux-do/callback", gin.WrapF(handler.LinuxDoCallback))
 	api.GET("/auth/me", middleware.OptionalAuth, gin.WrapF(handler.CurrentUser))
 	api.GET("/settings", gin.WrapF(handler.Settings))
+	api.GET("/internal/image-bed-settings", gin.WrapF(handler.InternalImageBedSettings))
 	api.GET("/models", gin.WrapF(handler.Models))
 	api.POST("/prompt/extract", gin.WrapF(handler.PromptExtract))
 	api.POST("/detail-llm", gin.WrapF(handler.DetailLLM))

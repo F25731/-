@@ -30,13 +30,23 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 		return model.Settings{}, err
 	}
 	settings = normalizeSettings(settings)
-	keepPrivateAPIKeys(&settings, normalizeSettings(saved))
-	keepPrivateAuthSecrets(&settings, normalizeSettings(saved))
+	normalizedSaved := normalizeSettings(saved)
+	keepPrivateAPIKeys(&settings, normalizedSaved)
+	keepPrivateAuthSecrets(&settings, normalizedSaved)
+	keepImageBedSecret(&settings, normalizedSaved)
 	result, err := repository.SaveSettings(settings, now())
 	if err == nil {
 		RefreshPromptSyncScheduler()
 	}
 	return hidePrivateAPIKeys(result), err
+}
+
+func InternalImageBedSetting() (model.ImageBedSetting, error) {
+	settings, err := repository.GetSettings()
+	if err != nil {
+		return model.ImageBedSetting{}, err
+	}
+	return normalizePrivateSetting(settings.Private).ImageBed, nil
 }
 
 func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error) {
@@ -104,6 +114,9 @@ func normalizePrivateSetting(setting model.PrivateSetting) model.PrivateSetting 
 		setting.Channels = []model.ModelChannel{}
 	}
 	setting.PromptSync = normalizePromptSyncSetting(setting.PromptSync)
+	setting.ImageBed.UploadURL = strings.TrimSpace(setting.ImageBed.UploadURL)
+	setting.ImageBed.APIKey = strings.TrimSpace(setting.ImageBed.APIKey)
+	setting.ImageBed.HasAPIKey = setting.ImageBed.APIKey != ""
 	for i := range setting.Channels {
 		if setting.Channels[i].Protocol == "" {
 			setting.Channels[i].Protocol = "openai"
@@ -123,6 +136,8 @@ func hidePrivateAPIKeys(settings model.Settings) model.Settings {
 		settings.Private.Channels[i].APIKey = ""
 	}
 	settings.Private.Auth.LinuxDo.ClientSecret = ""
+	settings.Private.ImageBed.HasAPIKey = strings.TrimSpace(settings.Private.ImageBed.APIKey) != ""
+	settings.Private.ImageBed.APIKey = ""
 	return settings
 }
 
@@ -140,6 +155,12 @@ func keepPrivateAPIKeys(settings *model.Settings, saved model.Settings) {
 func keepPrivateAuthSecrets(settings *model.Settings, saved model.Settings) {
 	if strings.TrimSpace(settings.Private.Auth.LinuxDo.ClientSecret) == "" {
 		settings.Private.Auth.LinuxDo.ClientSecret = saved.Private.Auth.LinuxDo.ClientSecret
+	}
+}
+
+func keepImageBedSecret(settings *model.Settings, saved model.Settings) {
+	if strings.TrimSpace(settings.Private.ImageBed.APIKey) == "" {
+		settings.Private.ImageBed.APIKey = saved.Private.ImageBed.APIKey
 	}
 }
 

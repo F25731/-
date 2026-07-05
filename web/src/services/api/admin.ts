@@ -205,6 +205,11 @@ export type AdminPrivateSettings = {
             clientSecret: string;
         };
     };
+    imageBed: {
+        uploadUrl: string;
+        apiKey: string;
+        hasApiKey?: boolean;
+    };
 };
 
 export type AdminSettings = {

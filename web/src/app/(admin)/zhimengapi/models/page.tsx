@@ -5,10 +5,11 @@ import { App, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space
 import { useEffect, useState } from "react";
 
 import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
-import { createAdminModel, deleteAdminModel, fetchAdminModels, updateAdminModel, type AdminModel } from "@/services/api/admin";
+import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
 type ModelType = "image" | "video" | "parse" | "prompt" | "detail_prompt";
+type ImageBedFormValues = { uploadUrl: string; apiKey: string };
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片分组",
@@ -34,12 +35,16 @@ export default function ModelsPage() {
     const [models, setModels] = useState<AdminModel[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
+    const [settings, setSettings] = useState<AdminSettings | null>(null);
+    const [isSettingsLoading, setIsSettingsLoading] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [form] = Form.useForm<AdminModel>();
+    const [imageBedForm] = Form.useForm<ImageBedFormValues>();
     const currentType = Form.useWatch("type", form) || "image";
 
     useEffect(() => {
         void loadModels();
+        void loadSettings();
     }, [token]);
 
     const loadModels = async () => {
@@ -52,6 +57,50 @@ export default function ModelsPage() {
             message.error(error instanceof Error ? error.message : "加载模型失败");
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const loadSettings = async () => {
+        if (!token) return;
+        setIsSettingsLoading(true);
+        try {
+            const data = await fetchAdminSettings(token);
+            setSettings(data);
+            imageBedForm.setFieldsValue({
+                uploadUrl: data.private.imageBed?.uploadUrl || "https://tc.zmoapi.cn/api/upload",
+                apiKey: "",
+            });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载图床配置失败");
+        } finally {
+            setIsSettingsLoading(false);
+        }
+    };
+
+    const saveImageBedSettings = async () => {
+        if (!token || !settings) return;
+        try {
+            const values = await imageBedForm.validateFields();
+            const nextSettings: AdminSettings = {
+                ...settings,
+                private: {
+                    ...settings.private,
+                    imageBed: {
+                        ...settings.private.imageBed,
+                        uploadUrl: values.uploadUrl.trim(),
+                        apiKey: values.apiKey.trim(),
+                    },
+                },
+            };
+            const saved = await saveAdminSettings(token, nextSettings);
+            setSettings(saved);
+            imageBedForm.setFieldsValue({
+                uploadUrl: saved.private.imageBed?.uploadUrl || values.uploadUrl.trim(),
+                apiKey: "",
+            });
+            message.success("图床配置已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存图床配置失败");
         }
     };
 
@@ -130,6 +179,39 @@ export default function ModelsPage() {
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
                             添加配置
                         </Button>
+                    </Flex>
+                </Card>
+
+                <Card variant="borderless" loading={isSettingsLoading}>
+                    <Flex justify="space-between" align="flex-start" gap={16}>
+                        <div style={{ minWidth: 180 }}>
+                            <Typography.Title level={5} style={{ margin: 0 }}>
+                                图床配置
+                            </Typography.Title>
+                            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                                参考图上传会先走这里配置的图床。API Key 留空表示继续使用已保存密钥。
+                            </Typography.Text>
+                        </div>
+                        <Form form={imageBedForm} layout="vertical" requiredMark={false} style={{ flex: 1 }}>
+                            <Flex gap={12} align="flex-start">
+                                <Form.Item name="uploadUrl" label="上传地址" rules={[{ required: true, message: "请输入上传地址" }]} style={{ flex: 1, marginBottom: 0 }}>
+                                    <Input placeholder="https://tc.zmoapi.cn/api/upload" />
+                                </Form.Item>
+                                <Form.Item
+                                    name="apiKey"
+                                    label="API Key"
+                                    style={{ width: 320, marginBottom: 0 }}
+                                    extra={settings?.private.imageBed?.hasApiKey ? "已保存密钥；留空表示不修改。" : "首次配置请填写。"}
+                                >
+                                    <Input.Password placeholder={settings?.private.imageBed?.hasApiKey ? "留空表示不修改" : "ib_..."} />
+                                </Form.Item>
+                                <Form.Item label=" " style={{ marginBottom: 0 }}>
+                                    <Button type="primary" icon={<SaveOutlined />} onClick={saveImageBedSettings}>
+                                        保存图床配置
+                                    </Button>
+                                </Form.Item>
+                            </Flex>
+                        </Form>
                     </Flex>
                 </Card>
 

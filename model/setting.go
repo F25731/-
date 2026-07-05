@@ -59,6 +59,13 @@ type PrivateSetting struct {
 	Channels   []ModelChannel     `json:"channels"`
 	PromptSync PromptSyncSetting  `json:"promptSync"`
 	Auth       PrivateAuthSetting `json:"auth"`
+	ImageBed   ImageBedSetting    `json:"imageBed"`
+}
+
+type ImageBedSetting struct {
+	UploadURL string `json:"uploadUrl"`
+	APIKey    string `json:"apiKey"`
+	HasAPIKey bool   `json:"hasApiKey,omitempty"`
 }
 
 // PromptSyncSetting 提示词定时同步配置。

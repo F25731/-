@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/service"
@@ -21,6 +22,20 @@ func Settings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	OK(w, settings)
+}
+
+func InternalImageBedSettings(w http.ResponseWriter, r *http.Request) {
+	token := os.Getenv("JWT_SECRET")
+	if token == "" || r.Header.Get("x-infinite-canvas-internal-token") != token {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	setting, err := service.InternalImageBedSetting()
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, setting)
 }
 
 func AdminSettings(w http.ResponseWriter, r *http.Request) {
