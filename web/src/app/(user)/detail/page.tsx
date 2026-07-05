@@ -541,7 +541,7 @@ export default function DetailWorkbenchPage() {
         setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: "generating", error: undefined }));
         try {
             const refs = await buildGenerationReferences(index, sourceScreens, options);
-            const prompt = buildImagePrompt(sourcePlan, target, index);
+            const prompt = buildImagePrompt(sourcePlan, target, index, options?.mode || "precise", Boolean(options?.includeCurrent));
             const images = refs.length ? await requestEdit(imageConfig, prompt, refs) : await requestGeneration(imageConfig, prompt);
             const uploaded = await uploadImage(images[0].dataUrl);
             setScreens((items) =>
@@ -587,15 +587,17 @@ export default function DetailWorkbenchPage() {
         const anchorScreens = options?.mode === "rough" ? [first] : [first, previous];
         const anchors: DetailReference[] = anchorScreens
             .filter((screen): screen is DetailScreen & { imageUrl: string; storageKey: string } => Boolean(screen))
-            .map((screen) => ({
-                id: `screen-${screen.index}`,
+            .map((screen, order) => ({
+                id: `screen-${screen.index}-anchor-${order + 1}`,
                 name: `screen-${screen.index}.png`,
                 type: "image/png",
                 dataUrl: screen.imageUrl,
                 url: screen.imageUrl,
                 storageKey: screen.storageKey,
             }));
-        return hydrateReferences(uniqueReferences([...currentReference, ...anchors, ...references]).slice(0, limit));
+        const remainingSlots = Math.max(0, limit - anchors.length);
+        const extras = uniqueReferences([...currentReference, ...references]).filter((reference) => !anchors.some((anchor) => anchor.storageKey === reference.storageKey && anchor.id !== reference.id));
+        return hydrateReferences([...anchors, ...extras.slice(0, remainingSlots)]);
     };
 
     const hydrateReferences = async (items: DetailReference[]) => {
@@ -1221,20 +1223,35 @@ ${content}
 `.trim();
 }
 
-function buildImagePrompt(plan: DetailPlan, screen: DetailPlanScreen, index: number) {
+function buildImagePrompt(plan: DetailPlan, screen: DetailPlanScreen, index: number, mode: DetailGenerationMode, includeCurrent: boolean) {
+    const referenceGuide =
+        index === 1
+            ? "这是整套详情页的第一屏。参考图主要来自用户上传的商品图/竞品图，请准确保持产品外观、材质、结构和白灰科技感，并建立整套长图的视觉基调。"
+            : mode === "rough"
+              ? "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调。当前屏请以图一保持产品质感、色调、光影、字体氛围和高级感。"
+              : "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调；图二 = 系统参考图片编号中的图片2，也就是当前屏正上方的上一屏，是顶部衔接参考。当前屏顶部要自然承接图二底部，让两张图上下拼接时像连续的同一张长图。";
+    const currentGuide = includeCurrent ? "如果还提供了图三，它对应系统参考图片编号中的图片3，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图三改变图一和图二的优先级。" : "";
     const continuity =
         index === 1
-            ? "这是整套详情页的第一屏，必须建立明确的主视觉风格基调。"
-            : "这是完整电商详情页中的一屏，将会与第一屏和上一屏上下拼接。必须继承第一屏的整体风格，并让顶部自然承接上一屏底部的颜色、光影、背景氛围；底部保持干净自然，方便下一屏继续衔接。";
+            ? "第一屏底部也要为下一屏预留可衔接区域，避免主体、标题、图标或复杂纹理贴近底边。"
+            : "当前屏是完整详情页长图中的一段，不是独立海报。请根据图一统一风格，根据图二处理顶部衔接。";
     return `
 ${screen.prompt}
 
 全局风格摘要：
 ${plan.styleSummary}
 
+参考图说明：
+${referenceGuide}
+${currentGuide}
+
 衔接要求：
 ${continuity}
-不要添加明显边框、强分割线、页面框线或空白填充。保持商品外观、结构、颜色、包装和品牌视觉特征一致。
+1. 当前屏顶部 10%-18% 是与上一屏衔接的过渡区域，不能放主体产品、重要标题、参数文字、图标组或复杂结构。
+2. 过渡区域不需要全纯色，可以使用低复杂度的浅灰白背景、柔和气流、轻雾、淡光影、简单曲线或非常简洁的纹理，但不要出现难以对接的复杂图案、硬边框、强分割线、页面框线。
+3. 当前屏底部 10%-18% 也要为下一屏预留自然衔接区域，保持低复杂度、可延展、无重要内容。
+4. 主体产品、宠物、爆炸结构、卖点图标和主要文字都放在中间区域，避免贴近上下边缘。
+5. 保持商品外观、结构、颜色、包装和品牌视觉特征一致。
 `.trim();
 }
 
