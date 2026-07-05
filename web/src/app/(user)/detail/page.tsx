@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, WheelEvent } from "react";
 import { App, Button, Input, InputNumber, Modal, Select, Space, Tag } from "antd";
-import { ChevronDown, ChevronLeft, ChevronRight, Download, LoaderCircle, Plus, RefreshCw, Settings2, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Eye, LoaderCircle, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
@@ -41,6 +41,7 @@ type DetailScreen = DetailPlanScreen & {
 };
 
 type DetailLlmKeys = Record<string, string>;
+type DetailGenerationMode = "precise" | "rough";
 
 type DetailProject = {
     id: string;
@@ -71,6 +72,8 @@ export default function DetailWorkbenchPage() {
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeProjectIdRef = useRef<string | null>(null);
+    const currentReplaceInputRef = useRef<HTMLInputElement | null>(null);
+    const addScreenUploadInputRef = useRef<HTMLInputElement | null>(null);
     const [projects, setProjects] = useState<DetailProject[]>([]);
     const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
     const [projectReady, setProjectReady] = useState(false);
@@ -91,9 +94,19 @@ export default function DetailWorkbenchPage() {
     const [feedback, setFeedback] = useState("");
     const [isRunning, setIsRunning] = useState(false);
     const [statusText, setStatusText] = useState("");
+    const [planEditorOpen, setPlanEditorOpen] = useState(false);
+    const [draftStyleSummary, setDraftStyleSummary] = useState("");
+    const [draftScreens, setDraftScreens] = useState<DetailPlanScreen[]>([]);
+    const [generationModeOpen, setGenerationModeOpen] = useState(false);
+    const [addScreenOpen, setAddScreenOpen] = useState(false);
+    const [addScreenPrompt, setAddScreenPrompt] = useState("");
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewImageUrl, setPreviewImageUrl] = useState("");
+    const [previewScale, setPreviewScale] = useState(1);
 
     const currentScreen = screens.find((screen) => screen.index === currentIndex) || null;
     const generatedScreens = screens.filter((screen) => screen.imageUrl);
+    const failedScreens = screens.filter((screen) => screen.status === "failed");
     const generatingScreen = screens.find((screen) => screen.status === "generating") || null;
     const activeProject = projects.find((project) => project.id === activeProjectId) || null;
     const selectedLlm = llmModels.find((model) => model.id === selectedLlmId) || llmModels[0] || null;
@@ -323,19 +336,82 @@ export default function DetailWorkbenchPage() {
         setStatusText("正在生成整套详情图设计方案");
         try {
             const nextPlan = await createDetailPlan();
-            const normalizedScreens = nextPlan.screens.slice(0, screenCount).map((screen) => ({ ...screen, status: "not_started" as const }));
-            setPlan({ ...nextPlan, screens: normalizedScreens });
-            setScreens(normalizedScreens);
-            setCurrentIndex(1);
+            setDraftStyleSummary(nextPlan.styleSummary);
+            setDraftScreens(nextPlan.screens);
             setFeedback("");
-            await generateScreen(1, normalizedScreens, nextPlan);
-            message.success("第一屏已生成");
+            setPlanEditorOpen(true);
+            message.success("分屏提示词已生成");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "生成失败");
         } finally {
             setIsRunning(false);
             setStatusText("");
         }
+    };
+
+    const applyPromptPlan = () => {
+        const nextPlan = normalizePlan(
+            {
+                styleSummary: draftStyleSummary,
+                screens: draftScreens,
+            },
+            draftScreens.length || screenCount,
+        );
+        const normalizedScreens = nextPlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        setPlan(nextPlan);
+        setScreens(normalizedScreens);
+        setScreenCount(normalizedScreens.length);
+        setCurrentIndex(1);
+        setFeedback("");
+        setPlanEditorOpen(false);
+        setGenerationModeOpen(true);
+    };
+
+    const startGenerationWithMode = async (mode: DetailGenerationMode) => {
+        if (!plan) return;
+        if (!isAiConfigReady(imageConfig, imageConfig.model)) {
+            openConfigDialog(true);
+            return;
+        }
+        setGenerationModeOpen(false);
+        setIsRunning(true);
+        setFeedback("");
+        try {
+            if (mode === "rough") {
+                await generateRoughPlan(plan);
+            } else {
+                await generatePrecisePlan(plan);
+            }
+            message.success("详情图生成完成");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "生成失败");
+        } finally {
+            setIsRunning(false);
+            setStatusText("");
+        }
+    };
+
+    const generatePrecisePlan = async (sourcePlan: DetailPlan) => {
+        let sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        setScreens(sourceScreens);
+        setCurrentIndex(1);
+        for (const screen of sourceScreens) {
+            setStatusText(`精细模式：正在生成第 ${screen.index} 屏`);
+            const generated = await generateScreen(screen.index, sourceScreens, sourcePlan, { throwOnError: false });
+            if (generated) sourceScreens = patchScreen(sourceScreens, screen.index, generated);
+        }
+    };
+
+    const generateRoughPlan = async (sourcePlan: DetailPlan) => {
+        const sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        setScreens(sourceScreens);
+        setCurrentIndex(1);
+        setStatusText("粗糙模式：正在生成第一屏");
+        const first = await generateScreen(1, sourceScreens, sourcePlan, { throwOnError: false });
+        if (!first?.imageUrl || !first.storageKey) return;
+        const anchoredScreens = sourceScreens.map((screen) => (screen.index === 1 ? { ...screen, imageUrl: first.imageUrl, storageKey: first.storageKey, status: "ready" as const } : screen));
+        setStatusText("粗糙模式：正在并发生成其余屏");
+        await Promise.all(sourcePlan.screens.slice(1).map((screen) => generateScreen(screen.index, anchoredScreens, sourcePlan, { mode: "rough", throwOnError: false })));
     };
 
     const createDetailPlan = async () => {
@@ -459,7 +535,7 @@ export default function DetailWorkbenchPage() {
         }
     };
 
-    const generateScreen = async (index: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan, options?: { includeCurrent?: boolean }) => {
+    const generateScreen = async (index: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan, options?: { includeCurrent?: boolean; mode?: DetailGenerationMode; throwOnError?: boolean }) => {
         const target = sourceScreens.find((screen) => screen.index === index);
         if (!target) throw new Error("未找到当前屏提示词");
         setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: "generating", error: undefined }));
@@ -476,13 +552,21 @@ export default function DetailWorkbenchPage() {
                     error: undefined,
                 }),
             );
+            return {
+                ...target,
+                imageUrl: uploaded.url,
+                storageKey: uploaded.storageKey,
+                status: "ready" as const,
+                error: undefined,
+            };
         } catch (error) {
             setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: target.imageUrl ? "ready" : "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            if (options?.throwOnError === false) return undefined;
             throw error;
         }
     };
 
-    const buildGenerationReferences = async (index: number, sourceScreens: DetailScreen[], options?: { includeCurrent?: boolean }) => {
+    const buildGenerationReferences = async (index: number, sourceScreens: DetailScreen[], options?: { includeCurrent?: boolean; mode?: DetailGenerationMode }) => {
         const limit = imageReferenceLimit(imageConfig, imageConfig.model);
         const current = options?.includeCurrent ? sourceScreens.find((screen) => screen.index === index && screen.imageUrl && screen.storageKey) : null;
         const currentReference = current
@@ -500,7 +584,8 @@ export default function DetailWorkbenchPage() {
         if (index === 1) return hydrateReferences(uniqueReferences([...currentReference, ...references]).slice(0, limit));
         const first = sourceScreens.find((screen) => screen.index === 1 && screen.imageUrl && screen.storageKey);
         const previous = sourceScreens.find((screen) => screen.index === index - 1 && screen.imageUrl && screen.storageKey);
-        const anchors: DetailReference[] = [first, previous]
+        const anchorScreens = options?.mode === "rough" ? [first] : [first, previous];
+        const anchors: DetailReference[] = anchorScreens
             .filter((screen): screen is DetailScreen & { imageUrl: string; storageKey: string } => Boolean(screen))
             .map((screen) => ({
                 id: `screen-${screen.index}`,
@@ -546,6 +631,126 @@ export default function DetailWorkbenchPage() {
             URL.revokeObjectURL(url);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出失败");
+        }
+    };
+
+    const openLongPreview = async () => {
+        if (!generatedScreens.length) {
+            message.warning("还没有可预览的图片");
+            return;
+        }
+        try {
+            const blob = await composeLongImage(generatedScreens.map((screen) => screen.imageUrl!));
+            if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
+            setPreviewImageUrl(URL.createObjectURL(blob));
+            setPreviewScale(1);
+            setPreviewOpen(true);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "预览失败");
+        }
+    };
+
+    const closeLongPreview = () => {
+        if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
+        setPreviewImageUrl("");
+        setPreviewOpen(false);
+        setPreviewScale(1);
+    };
+
+    const handlePreviewWheel = (event: WheelEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        setPreviewScale((value) => Math.max(0.25, Math.min(3, Number((value + (event.deltaY > 0 ? -0.1 : 0.1)).toFixed(2)))));
+    };
+
+    const replaceCurrentImage = async (files: FileList | null) => {
+        if (!currentScreen || !files?.[0]) return;
+        const file = files[0];
+        if (!file.type.startsWith("image/")) {
+            message.warning("请选择图片文件");
+            return;
+        }
+        const uploaded = await uploadImage(file);
+        setScreens((items) =>
+            patchScreen(items, currentScreen.index, {
+                imageUrl: uploaded.url,
+                storageKey: uploaded.storageKey,
+                status: "ready",
+                error: undefined,
+            }),
+        );
+        message.success(`第 ${currentScreen.index} 屏已替换`);
+    };
+
+    const retryScreen = async (index: number) => {
+        if (!plan || isRunning) return;
+        setCurrentIndex(index);
+        setIsRunning(true);
+        setStatusText(`正在重新生成第 ${index} 屏`);
+        try {
+            await generateScreen(index, screens, plan, { throwOnError: false });
+        } finally {
+            setIsRunning(false);
+            setStatusText("");
+        }
+    };
+
+    const openAddScreen = () => {
+        setAddScreenPrompt("");
+        setAddScreenOpen(true);
+    };
+
+    const addScreenFromUpload = async (files: FileList | null) => {
+        if (!files?.[0]) return;
+        const file = files[0];
+        if (!file.type.startsWith("image/")) {
+            message.warning("请选择图片文件");
+            return;
+        }
+        const uploaded = await uploadImage(file);
+        const index = screens.length + 1;
+        const nextScreen: DetailScreen = {
+            index,
+            title: `第 ${index} 屏`,
+            goal: "用户手动添加",
+            prompt: addScreenPrompt.trim() || `电商详情页第 ${index} 屏，延续整套风格。`,
+            imageUrl: uploaded.url,
+            storageKey: uploaded.storageKey,
+            status: "ready",
+        };
+        const nextScreens = [...screens, nextScreen];
+        const nextPlan = normalizePlan({ styleSummary: plan?.styleSummary || "统一详情页视觉风格", screens: [...(plan?.screens || screens), nextScreen] }, nextScreens.length);
+        setPlan(nextPlan);
+        setScreens(nextScreens);
+        setScreenCount(nextScreens.length);
+        setCurrentIndex(index);
+        setAddScreenOpen(false);
+        message.success("已添加一屏");
+    };
+
+    const addScreenByAi = async () => {
+        if (!plan || isRunning) return;
+        const index = screens.length + 1;
+        const nextScreen: DetailScreen = {
+            index,
+            title: `第 ${index} 屏`,
+            goal: "补充详情页内容",
+            prompt: addScreenPrompt.trim() || `电商详情页第 ${index} 屏，延续第一屏风格，补充展示商品卖点或细节，上下自然衔接。`,
+            status: "not_started",
+        };
+        const nextScreens = [...screens, nextScreen];
+        const nextPlan = normalizePlan({ styleSummary: plan.styleSummary, screens: [...plan.screens, nextScreen] }, nextScreens.length);
+        setPlan(nextPlan);
+        setScreens(nextScreens);
+        setScreenCount(nextScreens.length);
+        setCurrentIndex(index);
+        setAddScreenOpen(false);
+        setIsRunning(true);
+        setStatusText(`正在生成第 ${index} 屏`);
+        try {
+            await generateScreen(index, nextScreens, nextPlan, { mode: "rough", throwOnError: false });
+        } finally {
+            setIsRunning(false);
+            setStatusText("");
         }
     };
 
@@ -704,7 +909,7 @@ export default function DetailWorkbenchPage() {
                         </Panel>
 
                         <Button type="primary" size="large" block icon={isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning} onClick={() => void startDesign()}>
-                            开始设计并生成第一屏
+                            生成分屏提示词
                         </Button>
                         {statusText ? <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300">{statusText}</div> : null}
                     </div>
@@ -750,11 +955,14 @@ export default function DetailWorkbenchPage() {
                                 </div>
                                 {centerImageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} showCount={false} className="mt-3 space-y-4" /> : null}
                             </div>
-                            <Input.TextArea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder={currentScreen?.index === 1 ? "输入对第一屏的修改建议。系统会调整整体设计方案并重新生成第一屏。" : "输入对当前屏的局部修改建议。系统只改写当前屏提示词并重新生成。"} />
+                            <Input.TextArea disabled={isRunning} value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder={currentScreen?.index === 1 ? "输入对第一屏的修改建议。系统会调整整体设计方案并重新生成第一屏。" : "输入对当前屏的局部修改建议。系统只改写当前屏提示词并重新生成。"} />
                             <div className="mt-3 flex flex-wrap justify-between gap-2">
                                 <Space wrap>
                                     <Button icon={<RefreshCw className="size-4" />} disabled={!currentScreen || isRunning} onClick={() => void regenerateCurrent()}>
                                         重新生成
+                                    </Button>
+                                    <Button icon={<Upload className="size-4" />} disabled={!currentScreen || isRunning} onClick={() => currentReplaceInputRef.current?.click()}>
+                                        替换本地图片
                                     </Button>
                                     <Button type="primary" icon={<Wand2 className="size-4" />} disabled={!currentScreen || isRunning || !feedback.trim()} onClick={() => void modifyCurrentScreen()}>
                                         按建议修改
@@ -764,6 +972,25 @@ export default function DetailWorkbenchPage() {
                                     生成下一张
                                 </Button>
                             </div>
+                            <input
+                                ref={currentReplaceInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                    void replaceCurrentImage(event.target.files);
+                                    event.target.value = "";
+                                }}
+                            />
+                            {failedScreens.length ? (
+                                <div className="mt-3 flex flex-wrap gap-2 rounded-lg border border-red-200 bg-red-50 p-2 dark:border-red-400/20 dark:bg-red-500/10">
+                                    {failedScreens.map((screen) => (
+                                        <Button key={screen.index} size="small" danger icon={<RefreshCw className="size-3.5" />} disabled={isRunning} onClick={() => void retryScreen(screen.index)}>
+                                            第 {screen.index} 屏失败，重新生成
+                                        </Button>
+                                    ))}
+                                </div>
+                            ) : null}
                         </div>
                         {generatingScreen ? (
                             <button
@@ -788,9 +1015,14 @@ export default function DetailWorkbenchPage() {
                             <div className="font-semibold">实时长图预览</div>
                             <div className="mt-1 text-xs text-stone-600 dark:text-stone-400">{generatedScreens.length ? `${generatedScreens.length} 屏已生成` : "生成后自动拼接"}</div>
                         </div>
-                        <Button size="small" icon={<Download className="size-4" />} disabled={!generatedScreens.length} onClick={() => void exportLongImage()}>
-                            导出
-                        </Button>
+                        <Space size={6}>
+                            <Button size="small" icon={<Eye className="size-4" />} disabled={!generatedScreens.length} onClick={() => void openLongPreview()}>
+                                预览
+                            </Button>
+                            <Button size="small" icon={<Download className="size-4" />} disabled={!generatedScreens.length} onClick={() => void exportLongImage()}>
+                                导出
+                            </Button>
+                        </Space>
                     </div>
                     <div className="overflow-hidden rounded-md border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-black">
                         {generatedScreens.length ? (
@@ -803,8 +1035,96 @@ export default function DetailWorkbenchPage() {
                             <div className="grid min-h-96 place-items-center px-6 text-center text-sm text-stone-500 dark:text-stone-500">暂无预览</div>
                         )}
                     </div>
+                    <Button className="mt-3" block icon={<Plus className="size-4" />} disabled={isRunning} onClick={openAddScreen}>
+                        添加一屏
+                    </Button>
                 </aside>
             </div>
+
+            <Modal title="分屏提示词确认" open={planEditorOpen} onCancel={() => setPlanEditorOpen(false)} onOk={applyPromptPlan} okText="应用提示词" cancelText="返回修改" width={980}>
+                <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-2">
+                    <div>
+                        <div className="mb-1 text-sm font-medium text-stone-700 dark:text-stone-200">整体风格</div>
+                        <Input.TextArea value={draftStyleSummary} rows={3} onChange={(event) => setDraftStyleSummary(event.target.value)} />
+                    </div>
+                    {draftScreens.map((screen, index) => (
+                        <div key={screen.index} className="rounded-lg border border-stone-200 p-3 dark:border-white/10">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <Tag color="blue">第 {index + 1} 屏</Tag>
+                                <Input
+                                    value={screen.title}
+                                    className="max-w-xs"
+                                    placeholder="屏幕标题"
+                                    onChange={(event) =>
+                                        setDraftScreens((items) =>
+                                            items.map((item, itemIndex) =>
+                                                itemIndex === index
+                                                    ? {
+                                                          ...item,
+                                                          title: event.target.value,
+                                                      }
+                                                    : item,
+                                            ),
+                                        )
+                                    }
+                                />
+                            </div>
+                            <Input className="mb-2" value={screen.goal} placeholder="本屏目的" onChange={(event) => setDraftScreens((items) => items.map((item, itemIndex) => (itemIndex === index ? { ...item, goal: event.target.value } : item)))} />
+                            <Input.TextArea value={screen.prompt} rows={6} placeholder="生图提示词" onChange={(event) => setDraftScreens((items) => items.map((item, itemIndex) => (itemIndex === index ? { ...item, prompt: event.target.value } : item)))} />
+                        </div>
+                    ))}
+                </div>
+            </Modal>
+
+            <Modal title="选择生成模式" open={generationModeOpen} onCancel={() => setGenerationModeOpen(false)} footer={null} width={640}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => void startGenerationWithMode("precise")}>
+                        <div className="mb-2 flex items-center gap-2 text-base font-semibold">
+                            <Sparkles className="size-4" />
+                            精细模式
+                        </div>
+                        <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">按顺序生成。第二屏以后默认带第一屏和上一屏作为参考，连贯性更好。</div>
+                    </button>
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => void startGenerationWithMode("rough")}>
+                        <div className="mb-2 flex items-center gap-2 text-base font-semibold">
+                            <Wand2 className="size-4" />
+                            粗糙模式
+                        </div>
+                        <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">先生成第一屏，再并发生成其他屏。后续屏以第一屏为风格参考，速度更快。</div>
+                    </button>
+                </div>
+            </Modal>
+
+            <Modal title="添加一屏" open={addScreenOpen} onCancel={() => setAddScreenOpen(false)} footer={null} width={620}>
+                <div className="space-y-3">
+                    <Input.TextArea value={addScreenPrompt} rows={4} onChange={(event) => setAddScreenPrompt(event.target.value)} placeholder="可选：输入这一屏要展示的内容或生图提示词" />
+                    <div className="flex flex-wrap gap-2">
+                        <Button icon={<Upload className="size-4" />} onClick={() => addScreenUploadInputRef.current?.click()}>
+                            上传本地图片
+                        </Button>
+                        <Button type="primary" icon={<Wand2 className="size-4" />} disabled={!plan || isRunning} onClick={() => void addScreenByAi()}>
+                            AI 生成
+                        </Button>
+                    </div>
+                    <input
+                        ref={addScreenUploadInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                            void addScreenFromUpload(event.target.files);
+                            event.target.value = "";
+                        }}
+                    />
+                </div>
+            </Modal>
+
+            <Modal title="长图预览" open={previewOpen} onCancel={closeLongPreview} footer={null} width={980}>
+                <div className="mb-2 text-xs text-stone-500 dark:text-stone-400">滚动鼠标缩放，拖动滚动条查看长图。</div>
+                <div className="max-h-[72vh] overflow-auto rounded-lg bg-stone-100 p-3 dark:bg-black" onWheel={handlePreviewWheel}>
+                    {previewImageUrl ? <img src={previewImageUrl} alt="" className="mx-auto block origin-top" style={{ width: `${previewScale * 100}%`, maxWidth: "none" }} /> : null}
+                </div>
+            </Modal>
 
             <Modal title="详情图 LLM Key 设置" open={settingsOpen} onCancel={() => setSettingsOpen(false)} onOk={saveLlmKeys} okText="保存" cancelText="取消" width={680}>
                 <div className="space-y-3">
