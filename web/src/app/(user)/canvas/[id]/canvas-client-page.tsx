@@ -10,6 +10,7 @@ import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } 
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { ensureReferenceImagesRemoteUrls, uploadReferenceImage } from "@/services/image-bed";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -1269,7 +1270,7 @@ function InfiniteCanvasPage() {
 
     const referenceImageCount = useCallback((nodeId: string) => {
         const sourceIds = new Set(connectionsRef.current.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId));
-        return nodesRef.current.filter((node) => sourceIds.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content)).length;
+        return nodesRef.current.filter((node) => sourceIds.has(node.id) && node.type === CanvasNodeType.Image && (Boolean(node.metadata?.content) || isReferenceImageNode(node))).length;
     }, []);
 
     const addReferenceImagesToNode = useCallback(
@@ -1288,24 +1289,21 @@ function InfiniteCanvasPage() {
 
             const batchRootId = targetNode.metadata?.batchRootId;
             const targetPosition = targetNode.position || getCanvasCenter();
-            const referenceNodes = await Promise.all(
-                acceptedFiles.map(async (item, index) => {
-                    const image = await uploadImage(item);
-                    const nodeSize = fitNodeSize(image.width, image.height, REFERENCE_NODE_MAX_WIDTH, REFERENCE_NODE_MAX_HEIGHT);
-                    return {
-                        id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-                        type: CanvasNodeType.Image,
-                        title: item.name || `参考图 ${currentCount + index + 1}`,
-                        position: {
-                            x: targetPosition.x - nodeSize.width - 120,
-                            y: targetPosition.y + (currentCount + index) * (nodeSize.height + 36),
-                        },
-                        width: nodeSize.width,
-                        height: nodeSize.height,
-                        metadata: { ...imageMetadata(image), prompt: "参考图" },
-                    } satisfies CanvasNodeData;
-                }),
-            );
+            const referenceNodes = acceptedFiles.map((item, index) => {
+                const nodeSize = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+                return {
+                    id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                    type: CanvasNodeType.Image,
+                    title: item.name || `参考图 ${currentCount + index + 1}`,
+                    position: {
+                        x: targetPosition.x - REFERENCE_NODE_MAX_WIDTH - 120,
+                        y: targetPosition.y + (currentCount + index) * (REFERENCE_NODE_MAX_HEIGHT + 36),
+                    },
+                    width: Math.min(nodeSize.width, REFERENCE_NODE_MAX_WIDTH),
+                    height: Math.min(nodeSize.height, REFERENCE_NODE_MAX_HEIGHT),
+                    metadata: { prompt: "参考图", status: NODE_STATUS_LOADING },
+                } satisfies CanvasNodeData;
+            });
             const referenceIds = referenceNodes.map((node) => node.id);
             setNodes((prev) => [
                 ...prev.map((node) => {
@@ -1357,7 +1355,38 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([nodeId]));
             setSelectedConnectionId(null);
             setDialogNodeId(nodeId);
-            message.success(`已添加 ${referenceNodes.length} 张参考图`);
+            message.success(`正在上传 ${referenceNodes.length} 张参考图`);
+            void Promise.all(
+                referenceNodes.map(async (node, index) => {
+                    try {
+                        const image = await uploadReferenceImage(acceptedFiles[index]);
+                        const nodeSize = fitNodeSize(image.width, image.height, REFERENCE_NODE_MAX_WIDTH, REFERENCE_NODE_MAX_HEIGHT);
+                        setNodes((prev) =>
+                            prev.map((item) =>
+                                item.id === node.id
+                                    ? {
+                                          ...item,
+                                          width: nodeSize.width,
+                                          height: nodeSize.height,
+                                          metadata: { ...imageMetadata(image), remoteUrl: image.remoteUrl, prompt: "参考图", errorDetails: undefined },
+                                      }
+                                    : item,
+                            ),
+                        );
+                    } catch (error) {
+                        setNodes((prev) =>
+                            prev.map((item) =>
+                                item.id === node.id
+                                    ? {
+                                          ...item,
+                                          metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "参考图上传失败" },
+                                      }
+                                    : item,
+                            ),
+                        );
+                    }
+                }),
+            );
             return true;
         },
         [currentReferenceLimit, getCanvasCenter, message, referenceImageCount],
@@ -1731,7 +1760,7 @@ function InfiniteCanvasPage() {
             const title = buildAngleLabel(params);
             const prompt = buildAnglePrompt(params);
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
-                { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
+                { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, remoteUrl: node.metadata.remoteUrl, storageKey: node.metadata.storageKey },
             ]);
             setAngleNodeId(null);
             setRunningNodeId(childId);
@@ -1751,7 +1780,7 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([childId]));
             setDialogNodeId(childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }]).then(
+                const image = await requestEdit(generationConfig, prompt, [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, remoteUrl: node.metadata.remoteUrl, storageKey: node.metadata.storageKey }]).then(
                     (items) => items[0],
                 );
                 const uploaded = await uploadImage(image.dataUrl);
@@ -1916,6 +1945,11 @@ function InfiniteCanvasPage() {
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
+            const blockingReferences = findBlockingReferenceUploads(nodeId, nodesRef.current, connectionsRef.current);
+            if (blockingReferences.length) {
+                message.warning(blockingReferences.some((node) => node.metadata?.status === NODE_STATUS_ERROR) ? "有参考图上传失败，请删除或重新上传后再生成" : "参考图仍在上传，请等待上传成功后再生成");
+                return;
+            }
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -1945,12 +1979,13 @@ function InfiniteCanvasPage() {
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const sourceReference =
                         isImageNode && sourceNode?.metadata?.content
-                            ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
+                            ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, remoteUrl: sourceNode.metadata.remoteUrl, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const editReferenceImages = sourceReference.length ? [...sourceReference, ...generationContext.referenceImages.filter((image) => image.id !== sourceReference[0]?.id)] : referenceImages;
-                    const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, editReferenceImages);
+                    const aiEditReferenceImages = editReferenceImages.length ? await ensureReferenceImagesRemoteUrls(editReferenceImages) : [];
+                    const generationType = aiEditReferenceImages.length ? ("edit" as const) : ("generation" as const);
+                    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, aiEditReferenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -1979,7 +2014,7 @@ function InfiniteCanvasPage() {
                             resumeOnReload: undefined,
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
-                            batchUsesReferenceImages: referenceImages.length > 0,
+                            batchUsesReferenceImages: aiEditReferenceImages.length > 0,
                             primaryImageId: count > 1 ? rootId : undefined,
                             ...generationMetadata,
                             imageBatchExpanded: count > 1 ? true : undefined,
@@ -2049,8 +2084,8 @@ function InfiniteCanvasPage() {
                         targetIds.map(async (targetId, index) => {
                             const plan = promptPlans[index] || rootPromptPlan;
                             try {
-                                const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, plan.prompt, editReferenceImages).then((items) => items[0])
+                                const image = aiEditReferenceImages.length
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, plan.prompt, aiEditReferenceImages).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, plan.prompt).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -2928,11 +2963,20 @@ function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_").trim() || "canvas-image";
 }
 
+function isReferenceImageNode(node: CanvasNodeData) {
+    const prompt = node.metadata?.prompt?.trim();
+    const title = node.title?.trim();
+    return prompt === "参考图" || title?.startsWith("参考图") || (!node.metadata?.model && !node.metadata?.originalPrompt && !node.metadata?.generationType);
+}
+
 function isLocalReferenceImageNode(node: CanvasNodeData) {
     if (node.type !== CanvasNodeType.Image || !node.metadata?.storageKey?.startsWith("image:")) return false;
-    const prompt = node.metadata.prompt?.trim();
-    const title = node.title?.trim();
-    return prompt === "参考图" || title?.startsWith("参考图") || (!node.metadata.model && !node.metadata.originalPrompt && !node.metadata.generationType);
+    return isReferenceImageNode(node);
+}
+
+function findBlockingReferenceUploads(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const sourceIds = new Set(connections.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId));
+    return nodes.filter((node) => node.type === CanvasNodeType.Image && sourceIds.has(node.id) && isReferenceImageNode(node) && (!node.metadata?.content || node.metadata.status === NODE_STATUS_LOADING || node.metadata.status === NODE_STATUS_ERROR));
 }
 
 function fileExtension(mimeType = "", url = "") {
@@ -2962,7 +3006,7 @@ function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: A
 }
 
 function referenceUrl(image: ReferenceImage) {
-    return image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
+    return image.remoteUrl || image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
 }
 
 async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
@@ -2971,7 +3015,7 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     const references = await Promise.all(
         metadata.references.map(async (url, index) => {
             const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, remoteUrl: /^https?:\/\//i.test(url) ? url : undefined, storageKey: url.startsWith("image:") ? url : undefined } : null;
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
@@ -3152,6 +3196,7 @@ function sourceNodeReferenceImages(node: CanvasNodeData | null) {
             name: `${node.title || node.id}.png`,
             type: node.metadata.mimeType || "image/png",
             dataUrl: node.metadata.content,
+            remoteUrl: node.metadata.remoteUrl,
             storageKey: node.metadata.storageKey,
         },
     ];

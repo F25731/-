@@ -16,9 +16,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         return Response.json({ code: 1, data: null, msg: "Unsupported image job type" }, { status: 404 });
     }
 
-    const body = await request.arrayBuffer();
     const headers = forwardHeaders(request);
-    const job = createImageJob(() => forwardImageRequest(target, body, headers));
+    const body = await request.arrayBuffer();
+    const job = createImageJob(() => forwardImageRequest(target, kind, body, headers));
     return Response.json({ code: 0, data: { id: job.id, status: job.status }, msg: "ok" });
 }
 
@@ -38,11 +38,13 @@ function imageJobTarget(request: NextRequest, kind: string) {
     return `${apiBaseUrl}/images/${kind}`;
 }
 
-async function forwardImageRequest(target: string, body: ArrayBuffer, headers: Headers) {
+async function forwardImageRequest(target: string, kind: string, body: ArrayBuffer, headers: Headers) {
+    const requestBody = kind === "edits" && isJsonRequest(headers) ? await buildEditFormData(body) : body;
+    if (requestBody instanceof FormData) headers.delete("content-type");
     const response = await fetch(target, {
         method: "POST",
         headers,
-        body,
+        body: requestBody,
     });
     const text = await response.text();
     const payload = parseResponseBody(text);
@@ -50,6 +52,49 @@ async function forwardImageRequest(target: string, body: ArrayBuffer, headers: H
         throw new Error(readResponseError(payload) || `Image generation failed, HTTP ${response.status}`);
     }
     return payload;
+}
+
+function isJsonRequest(headers: Headers) {
+    return (headers.get("content-type") || "").toLowerCase().includes("application/json");
+}
+
+async function buildEditFormData(body: ArrayBuffer) {
+    const payload = JSON.parse(Buffer.from(body).toString("utf8")) as {
+        model?: string;
+        prompt?: string;
+        n?: number | string;
+        quality?: string;
+        size?: string;
+        referenceUrls?: string[];
+    };
+    const formData = new FormData();
+    if (payload.model) formData.set("model", payload.model);
+    if (payload.prompt) formData.set("prompt", payload.prompt);
+    if (payload.n) formData.set("n", String(payload.n));
+    if (payload.quality) formData.set("quality", payload.quality);
+    if (payload.size) formData.set("size", payload.size);
+
+    const urls = (payload.referenceUrls || []).filter((url) => /^https?:\/\//i.test(url));
+    if (!urls.length) throw new Error("No reference image URLs provided");
+    const files = await Promise.all(urls.map((url, index) => fetchReferenceImage(url, index)));
+    files.forEach(({ blob, name }) => formData.append("image", blob, name));
+    return formData;
+}
+
+async function fetchReferenceImage(url: string, index: number) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Reference image ${index + 1} download failed, HTTP ${response.status}`);
+    const blob = await response.blob();
+    const contentType = response.headers.get("content-type") || blob.type || "image/png";
+    return { blob: new Blob([blob], { type: contentType }), name: referenceFileName(url, contentType, index) };
+}
+
+function referenceFileName(url: string, contentType: string, index: number) {
+    const pathname = new URL(url).pathname;
+    const name = pathname.split("/").filter(Boolean).pop();
+    if (name && /\.[a-z0-9]+$/i.test(name)) return name;
+    const ext = contentType.match(/image\/([a-z0-9.+-]+)/i)?.[1] || "png";
+    return `reference-${index + 1}.${ext === "jpeg" ? "jpg" : ext}`;
 }
 
 function parseResponseBody(text: string) {

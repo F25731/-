@@ -191,7 +191,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
 
         try {
             const referenceImages: ReferenceImage[] = await Promise.all(
-                refs.filter((item) => item.dataUrl).map(async (item) => ({ id: item.id, name: `${item.title}.png`, type: "image/png", dataUrl: await imageToDataUrl(item), storageKey: item.storageKey })),
+                refs.filter((item) => item.dataUrl).map(async (item) => ({ id: item.id, name: `${item.title}.png`, type: "image/png", dataUrl: await imageToDataUrl(item), remoteUrl: item.remoteUrl, storageKey: item.storageKey })),
             );
             const images = referenceImages.length ? await requestEdit(requestConfig, text, referenceImages) : await requestGeneration(requestConfig, text);
             const storedImages = await Promise.all(images.map((image) => uploadImage(image.dataUrl)));
@@ -586,7 +586,7 @@ function AssistantReferenceChip({ item, onRemove }: { item: CanvasAssistantRefer
 
 function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
     if (node.type === CanvasNodeType.Image && node.metadata?.content) {
-        return { id: node.id, type: node.type, title: node.title, dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
+        return { id: node.id, type: node.type, title: node.title, dataUrl: node.metadata.content, remoteUrl: node.metadata.remoteUrl, storageKey: node.metadata.storageKey };
     }
     if (node.type === CanvasNodeType.Text && node.metadata?.content) {
         return { id: node.id, type: node.type, title: node.title, text: node.metadata.content };

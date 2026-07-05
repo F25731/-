@@ -7,13 +7,14 @@ import { useState } from "react";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { requestPromptExtraction } from "@/services/api/image";
-import { uploadImage } from "@/services/image-storage";
+import { uploadReferenceImage } from "@/services/image-bed";
 import type { ReferenceImage } from "@/types/image";
 
 export default function PromptPage() {
     const { message } = App.useApp();
     const copyText = useCopyText();
     const [image, setImage] = useState<ReferenceImage | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
     const [isExtracting, setIsExtracting] = useState(false);
     const [result, setResult] = useState("");
 
@@ -22,16 +23,23 @@ export default function PromptPage() {
             message.warning("请选择图片文件");
             return false;
         }
-        void uploadImage(file).then((uploaded) => {
-            setImage({ id: uploaded.storageKey, name: file.name || "prompt-image.png", type: uploaded.mimeType, dataUrl: uploaded.url, storageKey: uploaded.storageKey });
-            setResult("");
-        });
+        setIsUploading(true);
+        setResult("");
+        void uploadReferenceImage(file)
+            .then((uploaded) => {
+                setImage({ id: uploaded.storageKey, name: file.name || "prompt-image.png", type: uploaded.mimeType, dataUrl: uploaded.url, url: uploaded.url, remoteUrl: uploaded.remoteUrl, storageKey: uploaded.storageKey });
+            })
+            .catch((error) => {
+                setImage(null);
+                message.error(error instanceof Error ? error.message : "图片上传失败");
+            })
+            .finally(() => setIsUploading(false));
         return false;
     };
 
     const handleExtract = async () => {
-        if (!image) {
-            message.warning("请先上传图片");
+        if (!image || isUploading) {
+            message.warning(isUploading ? "图片仍在上传，请稍后" : "请先上传图片");
             return;
         }
         setIsExtracting(true);
@@ -60,7 +68,14 @@ export default function PromptPage() {
                             <Space direction="vertical" size={18} className="w-full">
                                 <Upload.Dragger accept="image/*" maxCount={1} showUploadList={false} beforeUpload={uploadPromptImage} className="!p-0">
                                     <div className="flex min-h-56 flex-col items-center justify-center px-5 py-8">
-                                        {image?.dataUrl ? (
+                                        {isUploading ? (
+                                            <div className="flex flex-col items-center gap-3">
+                                                <Spin />
+                                                <Typography.Text type="secondary" className="text-xs">
+                                                    正在上传图床
+                                                </Typography.Text>
+                                            </div>
+                                        ) : image?.dataUrl ? (
                                             <img src={image.dataUrl} alt="待提取图片" className="max-h-72 max-w-full rounded-lg object-contain" />
                                         ) : (
                                             <>
@@ -74,7 +89,7 @@ export default function PromptPage() {
                                     </div>
                                 </Upload.Dragger>
 
-                                <Button type="primary" size="large" block icon={<WandSparkles className="size-4" />} loading={isExtracting} onClick={handleExtract} className="h-12 text-base font-medium">
+                                <Button type="primary" size="large" block icon={<WandSparkles className="size-4" />} loading={isUploading || isExtracting} disabled={isUploading || !image} onClick={handleExtract} className="h-12 text-base font-medium">
                                     提取提示词
                                 </Button>
                             </Space>

@@ -4,9 +4,9 @@ import { DEFAULT_IMAGE_ASPECT_VALUES } from "@/constant/image-model-options";
 import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
-import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { ensureReferenceImageRemoteUrl, ensureReferenceImagesRemoteUrls, imageAiUrl } from "@/services/image-bed";
 import { apiPost } from "@/services/api/request";
 import { normalizeImageApiKeys, normalizeImageKeyTier } from "@/types/api-keys";
 import type { ReferenceImage } from "@/types/image";
@@ -110,11 +110,11 @@ function resolveRequestSize(quality: string | undefined, size: string) {
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
-    if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
-    }
     if (typeof item.url === "string" && item.url) {
         return item.url;
+    }
+    if (typeof item.b64_json === "string" && item.b64_json) {
+        return `data:image/png;base64,${item.b64_json}`;
     }
     return null;
 }
@@ -247,7 +247,6 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
                 n,
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
-                response_format: "b64_json",
             },
             aiHeaders(config, "application/json"),
         );
@@ -261,23 +260,22 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(MAX_IMAGE_GENERATION_COUNT, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
-    const requestPrompt = buildImageReferencePromptText(prompt, references);
-    const formData = new FormData();
-    formData.set("model", aiModel(config));
-    formData.set("prompt", withSystemPrompt(config, requestPrompt));
-    formData.set("n", String(n));
-    formData.set("response_format", "b64_json");
-    if (quality) {
-        formData.set("quality", quality);
-    }
-    if (requestSize) {
-        formData.set("size", requestSize);
-    }
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    files.forEach((file) => formData.append("image", file));
+    const remoteReferences = await ensureReferenceImagesRemoteUrls(references);
+    const requestPrompt = buildImageReferencePromptText(prompt, remoteReferences);
 
     try {
-        const images = await requestImageJob("edits", formData, aiHeaders(config));
+        const images = await requestImageJob(
+            "edits",
+            {
+                model: aiModel(config),
+                prompt: withSystemPrompt(config, requestPrompt),
+                n,
+                ...(quality ? { quality } : {}),
+                ...(requestSize ? { size: requestSize } : {}),
+                referenceUrls: remoteReferences.map((image) => imageAiUrl(image)).filter(Boolean),
+            },
+            aiHeaders(config, "application/json"),
+        );
         return images;
     } catch (error) {
         throw normalizeAiError(error, "请求失败");
@@ -390,7 +388,8 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
 }
 
 export async function requestPromptExtraction(image: ReferenceImage) {
-    const imageUrl = await imageToDataUrl(image);
+    const remoteImage = await ensureReferenceImageRemoteUrl(image);
+    const imageUrl = imageAiUrl(remoteImage) || (await imageToDataUrl(image));
     if (!imageUrl) throw new Error("请先上传图片");
     return apiPost<string>("/api/prompt/extract", { image: imageUrl });
 }

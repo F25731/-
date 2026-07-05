@@ -1,4 +1,5 @@
 import type { ChatCompletionMessage } from "@/services/api/image";
+import { ensureReferenceImagesRemoteUrls, imageAiUrl } from "@/services/image-bed";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
@@ -51,14 +52,15 @@ export function buildNodeChatMessages(context: NodeGenerationContext): ChatCompl
     return [
         {
             role: "user",
-            content: [{ type: "text" as const, text: context.prompt }, ...context.referenceImages.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } }))],
+            content: [{ type: "text" as const, text: context.prompt }, ...context.referenceImages.map((image) => ({ type: "image_url" as const, image_url: { url: imageAiUrl(image) || image.dataUrl } }))],
         },
     ];
 }
 
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
     const { imageToDataUrl } = await import("@/services/image-storage");
-    return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
+    const hydrated = await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) })));
+    return { ...context, referenceImages: await ensureReferenceImagesRemoteUrls(hydrated) };
 }
 
 function readNodeTextInput(node: CanvasNodeData) {
@@ -73,6 +75,7 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
         name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content,
+        remoteUrl: node.metadata.remoteUrl,
         storageKey: node.metadata.storageKey,
     };
 }

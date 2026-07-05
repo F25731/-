@@ -9,6 +9,7 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { requestEdit, requestGeneration, requestPromptExtraction } from "@/services/api/image";
+import { uploadReferenceImage } from "@/services/image-bed";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,9 @@ import type { ReferenceImage } from "@/types/image";
 
 type DetailReference = ReferenceImage & {
     url: string;
-    storageKey: string;
+    storageKey?: string;
+    uploadStatus?: "uploading" | "ready" | "failed";
+    error?: string;
 };
 
 type DetailPlanScreen = {
@@ -109,6 +112,8 @@ export default function DetailWorkbenchPage() {
     const generatedScreens = screens.filter((screen) => screen.imageUrl);
     const failedScreens = screens.filter((screen) => screen.status === "failed");
     const generatingScreen = screens.find((screen) => screen.status === "generating") || null;
+    const hasReferenceUploading = references.some((reference) => reference.uploadStatus === "uploading");
+    const hasReferenceUploadFailed = references.some((reference) => reference.uploadStatus === "failed");
     const activeProject = projects.find((project) => project.id === activeProjectId) || null;
     const selectedLlm = llmModels.find((model) => model.id === selectedLlmId) || llmModels[0] || null;
     const selectedLlmKey = selectedLlm ? llmKeys[selectedLlm.id]?.trim() || "" : "";
@@ -295,22 +300,45 @@ export default function DetailWorkbenchPage() {
 
     const handleReferenceFiles = async (files: FileList | null) => {
         if (!files?.length) return;
-        const next = await Promise.all(
-            Array.from(files)
-                .filter((file) => file.type.startsWith("image/"))
-                .map(async (file) => {
-                    const uploaded = await uploadImage(file);
-                    return {
-                        id: uploaded.storageKey,
-                        name: file.name || "reference.png",
-                        type: uploaded.mimeType,
-                        dataUrl: uploaded.url,
-                        url: uploaded.url,
-                        storageKey: uploaded.storageKey,
-                    };
-                }),
+        const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+        const pending = imageFiles.map((file, index) => {
+            const previewUrl = URL.createObjectURL(file);
+            return {
+                id: `pending-reference-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                name: file.name || "reference.png",
+                type: file.type || "image/png",
+                dataUrl: previewUrl,
+                url: previewUrl,
+                uploadStatus: "uploading" as const,
+            };
+        });
+        setReferences((items) => [...items, ...pending]);
+        await Promise.all(
+            pending.map(async (item, index) => {
+                try {
+                    const uploaded = await uploadReferenceImage(imageFiles[index]);
+                    setReferences((items) =>
+                        items.map((reference) =>
+                            reference.id === item.id
+                                ? {
+                                      ...reference,
+                                      id: uploaded.storageKey,
+                                      type: uploaded.mimeType,
+                                      dataUrl: uploaded.url,
+                                      url: uploaded.url,
+                                      remoteUrl: uploaded.remoteUrl,
+                                      storageKey: uploaded.storageKey,
+                                      uploadStatus: "ready" as const,
+                                      error: undefined,
+                                  }
+                                : reference,
+                        ),
+                    );
+                } catch (error) {
+                    setReferences((items) => items.map((reference) => (reference.id === item.id ? { ...reference, uploadStatus: "failed" as const, error: error instanceof Error ? error.message : "参考图上传失败" } : reference)));
+                }
+            }),
         );
-        setReferences((items) => [...items, ...next]);
     };
 
     const startDesign = async () => {
@@ -326,6 +354,10 @@ export default function DetailWorkbenchPage() {
         }
         if (!productInfo.trim()) {
             message.warning("请先输入商品信息和需求");
+            return;
+        }
+        if (hasReferenceUploading || hasReferenceUploadFailed) {
+            message.warning(hasReferenceUploadFailed ? "有参考图上传失败，请删除失败图片或重新上传后再生成" : "参考图仍在上传，请等待上传成功后再生成");
             return;
         }
         if (!isAiConfigReady(imageConfig, imageConfig.model)) {
@@ -393,7 +425,7 @@ export default function DetailWorkbenchPage() {
     };
 
     const generatePrecisePlan = async (sourcePlan: DetailPlan) => {
-        let sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        let sourceScreens: DetailScreen[] = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
         setScreens(sourceScreens);
         setCurrentIndex(1);
         for (const screen of sourceScreens) {
@@ -875,6 +907,12 @@ export default function DetailWorkbenchPage() {
                                     <div key={item.id} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-white/10">
                                         <img src={item.url} alt="" className="h-full w-full object-cover" />
                                         <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{index + 1}</span>
+                                        {item.uploadStatus === "uploading" ? (
+                                            <div className="absolute inset-0 grid place-items-center bg-black/55 text-white">
+                                                <LoaderCircle className="size-5 animate-spin" />
+                                            </div>
+                                        ) : null}
+                                        {item.uploadStatus === "failed" ? <div className="absolute inset-0 grid place-items-center bg-red-950/70 px-2 text-center text-[10px] leading-4 text-white">上传失败</div> : null}
                                         <div className="absolute inset-x-1 bottom-1 flex justify-between opacity-0 transition group-hover:opacity-100">
                                             <button type="button" className="grid size-6 place-items-center rounded-full bg-black/70" disabled={index === 0} onClick={() => setReferences((list) => moveItem(list, index, index - 1))}>
                                                 <ChevronLeft className="size-3.5" />
@@ -914,9 +952,10 @@ export default function DetailWorkbenchPage() {
                             {imageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} showCount={false} className="mt-3 space-y-4" /> : null}
                         </Panel>
 
-                        <Button type="primary" size="large" block icon={isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning} onClick={() => void startDesign()}>
+                        <Button type="primary" size="large" block icon={isRunning || hasReferenceUploading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning || hasReferenceUploading || hasReferenceUploadFailed} onClick={() => void startDesign()}>
                             生成分屏提示词
                         </Button>
+                        {hasReferenceUploading || hasReferenceUploadFailed ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200">{hasReferenceUploadFailed ? "有参考图上传失败，请删除失败图片或重新上传。" : "参考图正在上传图床，全部成功后才能生成。"}</div> : null}
                         {statusText ? <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300">{statusText}</div> : null}
                     </div>
                 </aside>

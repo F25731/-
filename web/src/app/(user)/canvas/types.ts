@@ -48,6 +48,7 @@ export type CanvasNodeMetadata = {
     imageBatchExpanded?: boolean;
     inputOrder?: string[];
     storageKey?: string;
+    remoteUrl?: string;
     mimeType?: string;
     bytes?: number;
     resumeOnReload?: boolean;
@@ -74,6 +75,7 @@ export type CanvasAssistantReference = {
     type: CanvasNodeType;
     title: string;
     dataUrl?: string;
+    remoteUrl?: string;
     storageKey?: string;
     text?: string;
 };
