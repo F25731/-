@@ -61,6 +61,7 @@ type DetailProject = {
 const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
 const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 const DEFAULT_SCREEN_COUNT = 6;
+const SEAM_REFERENCE_RATIO = 0.18;
 
 export default function DetailWorkbenchPage() {
     const { message, modal } = App.useApp();
@@ -582,19 +583,22 @@ export default function DetailWorkbenchPage() {
               ]
             : [];
         if (index === 1) return hydrateReferences(uniqueReferences([...currentReference, ...references]).slice(0, limit));
-        const first = sourceScreens.find((screen) => screen.index === 1 && screen.imageUrl && screen.storageKey);
-        const previous = sourceScreens.find((screen) => screen.index === index - 1 && screen.imageUrl && screen.storageKey);
-        const anchorScreens = options?.mode === "rough" ? [first] : [first, previous];
-        const anchors: DetailReference[] = anchorScreens
-            .filter((screen): screen is DetailScreen & { imageUrl: string; storageKey: string } => Boolean(screen))
-            .map((screen, order) => ({
-                id: `screen-${screen.index}-anchor-${order + 1}`,
-                name: `screen-${screen.index}.png`,
+        const first = sourceScreens.find((screen): screen is DetailScreen & { imageUrl: string; storageKey: string } => screen.index === 1 && Boolean(screen.imageUrl && screen.storageKey));
+        const previous = sourceScreens.find((screen): screen is DetailScreen & { imageUrl: string; storageKey: string } => screen.index === index - 1 && Boolean(screen.imageUrl && screen.storageKey));
+        const anchors: DetailReference[] = [];
+        if (first) {
+            anchors.push({
+                id: `screen-${first.index}-anchor-1`,
+                name: `screen-${first.index}.png`,
                 type: "image/png",
-                dataUrl: screen.imageUrl,
-                url: screen.imageUrl,
-                storageKey: screen.storageKey,
-            }));
+                dataUrl: first.imageUrl,
+                url: first.imageUrl,
+                storageKey: first.storageKey,
+            });
+        }
+        if (options?.mode !== "rough" && previous) {
+            anchors.push(await buildBottomSeamReference(previous));
+        }
         const remainingSlots = Math.max(0, limit - anchors.length);
         const extras = uniqueReferences([...currentReference, ...references]).filter((reference) => !anchors.some((anchor) => anchor.storageKey === reference.storageKey && anchor.id !== reference.id));
         return hydrateReferences([...anchors, ...extras.slice(0, remainingSlots)]);
@@ -1177,7 +1181,7 @@ ${input.referenceSummaries}
 2. 屏数：${input.screenCount}
 3. 不展示方案给用户，但系统会保存你的 JSON，用于逐屏生成。
 4. 第一屏必须是整套详情页风格基调。
-5. 后续每一屏都会默认参考第一屏和上一屏，所以提示词要强调上下衔接、无缝拼接、风格继承。
+5. 后续每一屏都会默认参考第一屏完整图和上一屏底部衔接条，所以提示词要强调风格继承、边缘衔接，但不要让下一屏复制上一屏底部的具体物体或局部画面。
 6. 不要虚构用户未提供的认证、销量、功效、专利、检测报告、排名、医师推荐等信息。
 7. 图片内中文文字要少而准，参数类信息只能使用用户提供的真实内容。
 8. 每屏都是完整竖版详情页模块，不是短海报放在空白长画布中间。
@@ -1228,13 +1232,19 @@ function buildImagePrompt(plan: DetailPlan, screen: DetailPlanScreen, index: num
         index === 1
             ? "这是整套详情页的第一屏。参考图主要来自用户上传的商品图/竞品图，请准确保持产品外观、材质、结构和白灰科技感，并建立整套长图的视觉基调。"
             : mode === "rough"
-              ? "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调。当前屏请以图一保持产品质感、色调、光影、字体氛围和高级感。"
-              : "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调；图二 = 系统参考图片编号中的图片2，也就是当前屏正上方的上一屏，是顶部衔接参考。当前屏顶部要自然承接图二底部，让两张图上下拼接时像连续的同一张长图。";
-    const currentGuide = includeCurrent ? "如果还提供了图三，它对应系统参考图片编号中的图片3，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图三改变图一和图二的优先级。" : "";
+              ? "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调。当前屏请以图一保持产品质感、色调、光影、字体氛围和高级感，但不要复制第一屏版式或首屏大标题结构。"
+              : "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调；图二 = 系统参考图片编号中的图片2，也就是上一屏底部衔接条，不是上一屏完整图。图二只用于学习上一屏最底部边缘的平均颜色、亮度、柔和光影、雾化感和背景方向，不要复制图二里的任何具体物体或局部画面。";
+    const currentGuide = !includeCurrent
+        ? ""
+        : index === 1
+          ? "如果还提供了当前屏修改前的旧图，它只用于理解第一屏原本内容，请根据用户要求局部调整，不要照搬旧图。"
+          : mode === "rough"
+            ? "如果还提供了图二，它对应系统参考图片编号中的图片2，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图二改变图一的风格优先级。"
+            : "如果还提供了图三，它对应系统参考图片编号中的图片3，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图三改变图一和图二的优先级。";
     const continuity =
         index === 1
             ? "第一屏底部也要为下一屏预留可衔接区域，避免主体、标题、图标或复杂纹理贴近底边。"
-            : "当前屏是完整详情页长图中的一段，不是独立海报。请根据图一统一风格，根据图二处理顶部衔接。";
+            : "当前屏是完整详情页长图中的后续内容屏，不是第一屏，不是主视觉海报。请根据图一统一风格，根据图二处理顶部边缘衔接，但不要把上一屏下半段接到本屏顶部。";
     return `
 ${screen.prompt}
 
@@ -1247,11 +1257,14 @@ ${currentGuide}
 
 衔接要求：
 ${continuity}
-1. 当前屏顶部 10%-18% 是与上一屏衔接的过渡区域，不能放主体产品、重要标题、参数文字、图标组或复杂结构。
-2. 过渡区域不需要全纯色，可以使用低复杂度的浅灰白背景、柔和气流、轻雾、淡光影、简单曲线或非常简洁的纹理，但不要出现难以对接的复杂图案、硬边框、强分割线、页面框线。
-3. 当前屏底部 10%-18% 也要为下一屏预留自然衔接区域，保持低复杂度、可延展、无重要内容。
-4. 主体产品、宠物、爆炸结构、卖点图标和主要文字都放在中间区域，避免贴近上下边缘。
-5. 保持商品外观、结构、颜色、包装和品牌视觉特征一致。
+1. 当前屏顶部 20%-25% 是无主体衔接安全区，只能是低复杂度、可延展、柔和的浅色背景。
+2. 顶部安全区禁止出现主体产品、包装、宠物、食盆、食物、零件、重要标题、参数文字、图标组、LOGO、边框、裁切物体或复杂结构。
+3. 不要复制、重画、拼接图二中的任何可识别内容；图二只作为边缘色彩和光影样本。
+4. 过渡区域不需要全纯色，可以使用低复杂度的浅灰白背景、柔和气流、轻雾、淡光影、简单曲线或非常简洁的纹理，但不要出现难以对接的复杂图案、硬边框、强分割线、页面框线。
+5. 当前屏底部 15%-18% 也要为下一屏预留自然衔接区域，保持低复杂度、可延展、无重要内容。
+6. 主体产品、宠物、爆炸结构、卖点图标和主要文字都放在中间区域，避免贴近上下边缘。
+7. 第二屏以后的内容屏不要重复第一屏的首屏大标题、主视觉封面结构或整屏包装海报构图。
+8. 保持商品外观、结构、颜色、包装和品牌视觉特征一致。
 `.trim();
 }
 
@@ -1398,6 +1411,49 @@ function screenStatusLabel(status: DetailScreen["status"]) {
     if (status === "ready") return "已生成";
     if (status === "failed") return "失败";
     return "未生成";
+}
+
+async function buildBottomSeamReference(screen: DetailScreen & { imageUrl: string; storageKey: string }): Promise<DetailReference> {
+    const sourceDataUrl = await imageToDataUrl({ url: screen.imageUrl, storageKey: screen.storageKey });
+    const seamDataUrl = await createBottomSeamDataUrl(sourceDataUrl);
+    return {
+        id: `screen-${screen.index}-bottom-seam`,
+        name: `screen-${screen.index}-bottom-seam.png`,
+        type: "image/png",
+        dataUrl: seamDataUrl,
+        url: seamDataUrl,
+        storageKey: `seam:${screen.storageKey}`,
+    };
+}
+
+async function createBottomSeamDataUrl(url: string) {
+    const image = await loadImage(url);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const seamHeight = Math.max(80, Math.round(height * SEAM_REFERENCE_RATIO));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器不支持衔接参考图处理");
+
+    context.fillStyle = "#f6f7ef";
+    context.fillRect(0, 0, width, height);
+
+    const blurPadding = Math.round(seamHeight * 0.16);
+    context.save();
+    context.filter = `blur(${Math.max(8, Math.round(seamHeight * 0.04))}px)`;
+    context.drawImage(image, 0, height - seamHeight, width, seamHeight, -blurPadding, -blurPadding, width + blurPadding * 2, seamHeight + blurPadding * 2);
+    context.restore();
+
+    const fade = context.createLinearGradient(0, 0, 0, Math.round(seamHeight * 1.9));
+    fade.addColorStop(0, "rgba(246, 247, 239, 0.08)");
+    fade.addColorStop(0.5, "rgba(246, 247, 239, 0.32)");
+    fade.addColorStop(1, "rgba(246, 247, 239, 0.92)");
+    context.fillStyle = fade;
+    context.fillRect(0, 0, width, Math.round(seamHeight * 1.9));
+
+    return canvas.toDataURL("image/png");
 }
 
 async function composeLongImage(urls: string[]) {
