@@ -72,7 +72,7 @@ export default function PromptPage() {
                                             <div className="flex flex-col items-center gap-3">
                                                 <Spin />
                                                 <Typography.Text type="secondary" className="text-xs">
-                                                    正在上传图床
+                                                    正在上传
                                                 </Typography.Text>
                                             </div>
                                         ) : image?.dataUrl ? (

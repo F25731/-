@@ -327,7 +327,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} label={isUploadingReferenceNode(props.node) ? "上传中" : "生成中"} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
@@ -341,13 +341,19 @@ const nodeContentRenderers = {
     [CanvasNodeType.Video]: VideoNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function LoadingContent({ theme, label = "生成中" }: Pick<NodeContentRendererProps, "theme"> & { label?: string }) {
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="text-[10px] tracking-[0.2em]">{label}</span>
         </div>
     );
+}
+
+function isUploadingReferenceNode(node: CanvasNodeData) {
+    const prompt = node.metadata?.prompt?.trim();
+    const title = node.title?.trim();
+    return node.type === CanvasNodeType.Image && (prompt === "参考图" || title?.startsWith("参考图"));
 }
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
@@ -422,7 +428,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent theme={props.theme} label={isUploadingReferenceNode(props.node) ? "上传中" : "生成中"} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
             ) : (

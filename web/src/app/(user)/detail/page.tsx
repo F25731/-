@@ -955,7 +955,7 @@ export default function DetailWorkbenchPage() {
                         <Button type="primary" size="large" block icon={isRunning || hasReferenceUploading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning || hasReferenceUploading || hasReferenceUploadFailed} onClick={() => void startDesign()}>
                             生成分屏提示词
                         </Button>
-                        {hasReferenceUploading || hasReferenceUploadFailed ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200">{hasReferenceUploadFailed ? "有参考图上传失败，请删除失败图片或重新上传。" : "参考图正在上传图床，全部成功后才能生成。"}</div> : null}
+                        {hasReferenceUploading || hasReferenceUploadFailed ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200">{hasReferenceUploadFailed ? "有参考图上传失败，请删除失败图片或重新上传。" : "参考图正在上传，全部成功后才能生成。"}</div> : null}
                         {statusText ? <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300">{statusText}</div> : null}
                     </div>
                 </aside>
