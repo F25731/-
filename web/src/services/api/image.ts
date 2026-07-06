@@ -272,7 +272,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 n,
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
-                referenceUrls: remoteReferences.map((image) => imageAiUrl(image)).filter(Boolean),
+                images: remoteReferences
+                    .map((image) => imageAiUrl(image))
+                    .filter(Boolean)
+                    .map((image_url) => ({ image_url })),
             },
             aiHeaders(config, "application/json"),
         );
