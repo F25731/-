@@ -110,11 +110,11 @@ function resolveRequestSize(quality: string | undefined, size: string) {
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
-    if (typeof item.url === "string" && item.url) {
-        return item.url;
-    }
     if (typeof item.b64_json === "string" && item.b64_json) {
         return `data:image/png;base64,${item.b64_json}`;
+    }
+    if (typeof item.url === "string" && item.url) {
+        return item.url;
     }
     return null;
 }
@@ -245,6 +245,8 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
                 model: aiModel(config),
                 prompt: withSystemPrompt(config, prompt),
                 n,
+                response_format: "b64_json",
+                output_format: "png",
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
             },
@@ -270,6 +272,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 model: aiModel(config),
                 prompt: withSystemPrompt(config, requestPrompt),
                 n,
+                response_format: "b64_json",
+                output_format: "png",
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 images: remoteReferences
