@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const headers = forwardHeaders(request);
-    const body = await forwardBody(request);
+    const body = await request.arrayBuffer();
     const job = createImageJob(() => forwardImageRequest(target, body, headers));
     return Response.json({ code: 0, data: { id: job.id, status: job.status }, msg: "ok" });
 }
@@ -31,14 +31,6 @@ function forwardHeaders(request: NextRequest) {
     return headers;
 }
 
-async function forwardBody(request: NextRequest) {
-    const contentType = request.headers.get("content-type") || "";
-    if (contentType.toLowerCase().includes("application/json")) {
-        return JSON.stringify(await request.json());
-    }
-    return request.arrayBuffer();
-}
-
 function imageJobTarget(request: NextRequest, kind: string) {
     if (kind !== "generations" && kind !== "edits") return "";
     const baseUrl = (request.headers.get("x-image-api-base-url") || process.env.IMAGE_API_BASE_URL || "https://api.zmoapi.cn").trim().replace(/\/+$/, "");
@@ -46,7 +38,7 @@ function imageJobTarget(request: NextRequest, kind: string) {
     return `${apiBaseUrl}/images/${kind}`;
 }
 
-async function forwardImageRequest(target: string, body: BodyInit, headers: Headers) {
+async function forwardImageRequest(target: string, body: ArrayBuffer, headers: Headers) {
     const response = await fetch(target, {
         method: "POST",
         headers,
