@@ -20,8 +20,6 @@ export function isRemoteImageUrl(value?: string) {
 
 export function imageAiUrl(image: Pick<ReferenceImage, "remoteUrl" | "url" | "dataUrl">) {
     if (isRemoteImageUrl(image.remoteUrl)) return image.remoteUrl;
-    if (isRemoteImageUrl(image.url)) return image.url;
-    if (isRemoteImageUrl(image.dataUrl)) return image.dataUrl;
     return "";
 }
 
@@ -80,9 +78,23 @@ async function referenceImageBlob(image: ReferenceImage) {
         const blob = await getImageBlob(image.storageKey);
         if (blob) return blob;
     }
+    const sourceUrl = isRemoteImageUrl(image.url) ? image.url : isRemoteImageUrl(image.dataUrl) ? image.dataUrl : "";
+    if (sourceUrl) return fetchImageBlob(sourceUrl);
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图已丢失，无法上传图床");
     return fetch(dataUrl).then((response) => response.blob());
+}
+
+async function fetchImageBlob(url: string) {
+    try {
+        const response = await fetch(url);
+        if (response.ok) return response.blob();
+    } catch {
+        // Cross-origin images can fail in the browser; use the same-origin proxy below.
+    }
+    const response = await fetch(`/api/image-fetch?url=${encodeURIComponent(url)}`);
+    if (!response.ok) throw new Error(`参考图读取失败：${response.status}`);
+    return response.blob();
 }
 
 function referenceCacheKey(image: ReferenceImage) {

@@ -3015,7 +3015,7 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     const references = await Promise.all(
         metadata.references.map(async (url, index) => {
             const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, remoteUrl: /^https?:\/\//i.test(url) ? url : undefined, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
