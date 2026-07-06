@@ -15,6 +15,11 @@ type VideoResponse = {
     id?: string;
     task_id?: string;
     status?: string;
+    url?: string;
+    video_url?: string;
+    result_url?: string;
+    output?: string[];
+    video?: { url?: string };
     error?: { message?: string; code?: string };
     metadata?: { url?: string };
 };
@@ -52,14 +57,18 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
         const taskId = created.id || created.task_id;
         if (!taskId) throw new Error("视频接口没有返回任务 ID");
+        let resultUrl = extractVideoUrl(created);
         for (;;) {
             const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${taskId}`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined })).data);
-            if (video.status === "completed") break;
+            resultUrl = extractVideoUrl(video) || resultUrl;
+            if (isVideoTaskCompleted(video.status) || resultUrl) break;
             if (video.status === "failed" || video.status === "cancelled") throw new Error(video.error?.message || "视频生成失败");
             await new Promise((resolve) => setTimeout(resolve, 2500));
         }
+        if (resultUrl) return fetchVideoResultBlob(resultUrl);
         const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${taskId}/content`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined, responseType: "blob" });
-        await assertVideoBlob(content.data);
+        const contentUrl = await extractVideoBlobUrl(content.data);
+        if (contentUrl) return fetchVideoResultBlob(contentUrl);
         return content.data;
     } catch (error) {
         throw new Error(readAxiosError(error, "视频生成失败"));
@@ -170,6 +179,30 @@ function unwrapVideoResponse(payload: ApiVideoResponse) {
     return payload;
 }
 
+function isVideoTaskCompleted(status = "") {
+    return ["completed", "done", "succeeded", "success", "finished"].includes(status.toLowerCase());
+}
+
+function extractVideoUrl(video: VideoResponse) {
+    return [video.url, video.video?.url, video.video_url, video.result_url, video.metadata?.url, ...(video.output || [])].find((url) => /^https?:\/\//i.test(String(url || ""))) || "";
+}
+
+async function fetchVideoResultBlob(url: string) {
+    try {
+        const response = await axios.get<Blob>(url, { responseType: "blob" });
+        if (!response.data.type.includes("json")) return response.data;
+    } catch {
+        // Cross-origin video URLs can fail in the browser; retry through the same-origin proxy.
+    }
+    const proxied = await axios.get<Blob>(`/api/media-fetch?url=${encodeURIComponent(url)}`, { responseType: "blob" });
+    if (proxied.data.type.includes("json")) {
+        const errorUrl = await extractVideoBlobUrl(proxied.data);
+        if (errorUrl && errorUrl !== url) return fetchVideoResultBlob(errorUrl);
+        throw new Error("视频结果下载失败");
+    }
+    return proxied.data;
+}
+
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number; message?: string }>(error)) {
         const responseData = error.response?.data;
@@ -178,14 +211,16 @@ function readAxiosError(error: unknown, fallback: string) {
     return error instanceof Error ? error.message : fallback;
 }
 
-async function assertVideoBlob(blob: Blob) {
+async function extractVideoBlobUrl(blob: Blob) {
     if (!blob.type.includes("json")) return;
-    let payload: { code?: number; msg?: string; error?: { message?: string }; message?: string };
+    let payload: ApiVideoResponse & { error?: { message?: string }; message?: string };
     try {
-        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string }; message?: string };
+        payload = JSON.parse(await blob.text()) as ApiVideoResponse & { error?: { message?: string }; message?: string };
     } catch {
         return;
     }
     if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "视频下载失败");
     if (payload.error?.message || payload.message) throw new Error(payload.error?.message || payload.message);
+    const video = unwrapVideoResponse(payload as ApiVideoResponse);
+    return extractVideoUrl(video);
 }
