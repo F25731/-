@@ -1,25 +1,33 @@
 "use client";
 
-import { CloudUploadOutlined, PlayCircleOutlined } from "@ant-design/icons";
-import { App, Button, Card, Input, Radio, Select, Space, Typography, Upload } from "antd";
-import { useEffect, useMemo, useState } from "react";
-import { Video } from "lucide-react";
+import { CloudUploadOutlined, LinkOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { App, Button, Card, Empty, Input, Radio, Segmented, Slider, Space, Tag, Typography, Upload } from "antd";
+import { Clock3, Film, Image as ImageIcon, Music2, Video } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-
-type AspectRatio = "16:9" | "9:16" | "1:1";
-type Duration = 4 | 6 | 8 | 10 | 12 | 15;
+import { VIDEO_QUALITY_OPTIONS } from "@/constant/video-model-options";
+import { uploadReferenceBlobToImageBed, uploadReferenceImage } from "@/services/image-bed";
+import { requestVideoGeneration, type VideoReferenceMaterial } from "@/services/api/video";
+import { useConfigStore, useEffectiveConfig, videoCapabilitiesForModel } from "@/stores/use-config-store";
+import type { ReferenceImage } from "@/types/image";
 
 export default function VideoPage() {
     const { message } = App.useApp();
     const config = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const [selectedModel, setSelectedModel] = useState<string>(config.videoModel);
-    const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
-    const [duration, setDuration] = useState<Duration>(4);
+    const [selectedModel, setSelectedModel] = useState(config.videoModel);
+    const capabilities = useMemo(() => videoCapabilitiesForModel(config, selectedModel), [config, selectedModel]);
+    const [ratio, setRatio] = useState(capabilities.defaultRatio);
+    const [quality, setQuality] = useState(capabilities.defaultQuality);
+    const [duration, setDuration] = useState(capabilities.defaultDuration);
     const [prompt, setPrompt] = useState("");
+    const [imageUrl, setImageUrl] = useState("");
+    const [videoUrlInput, setVideoUrlInput] = useState("");
+    const [audioUrlInput, setAudioUrlInput] = useState("");
+    const [imageReferences, setImageReferences] = useState<ReferenceImage[]>([]);
+    const [mediaReferences, setMediaReferences] = useState<VideoReferenceMaterial[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [videoUrl, setVideoUrl] = useState("");
+    const [resultUrl, setResultUrl] = useState("");
 
     const videoModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "video"), [config.modelTypes, config.models]);
 
@@ -28,9 +36,74 @@ export default function VideoPage() {
         setSelectedModel(config.videoModel && videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "");
     }, [config.videoModel, selectedModel, videoModels]);
 
+    useEffect(() => {
+        setRatio((current) => (capabilities.ratios.includes(current) ? current : capabilities.defaultRatio));
+        setQuality((current) => (capabilities.qualities.includes(current) ? current : capabilities.defaultQuality));
+        setDuration((current) => (capabilities.durations.includes(current) ? current : capabilities.defaultDuration));
+        setImageReferences((current) => current.slice(0, capabilities.referenceImageLimit));
+        setMediaReferences((current) => [
+            ...current.filter((item) => item.type === "video").slice(0, capabilities.referenceVideoLimit),
+            ...current.filter((item) => item.type === "audio").slice(0, capabilities.referenceAudioLimit),
+        ]);
+    }, [capabilities]);
+
     const handleModelChange = (model: string) => {
         setSelectedModel(model);
         updateConfig("videoModel", model);
+    };
+
+    const addImageUrl = () => {
+        const url = imageUrl.trim();
+        if (!isRemoteUrl(url)) {
+            message.warning("请输入 HTTPS 图片 URL");
+            return;
+        }
+        if (imageReferences.length >= capabilities.referenceImageLimit) {
+            message.warning(`当前模型最多 ${capabilities.referenceImageLimit} 张参考图`);
+            return;
+        }
+        setImageReferences((current) => [...current, { id: newID(), name: `image${current.length + 1}`, type: "image/url", dataUrl: "", url, remoteUrl: url }]);
+        setImageUrl("");
+    };
+
+    const addMediaUrl = (type: "video" | "audio", url: string, setUrl: (value: string) => void) => {
+        const limit = type === "video" ? capabilities.referenceVideoLimit : capabilities.referenceAudioLimit;
+        if (!limit) {
+            message.warning(`当前模型不支持参考${type === "video" ? "视频" : "音频"}`);
+            return;
+        }
+        const value = url.trim();
+        if (!isRemoteUrl(value)) {
+            message.warning(`请输入 HTTPS ${type === "video" ? "视频" : "音频"} URL`);
+            return;
+        }
+        if (mediaReferences.filter((item) => item.type === type).length >= limit) {
+            message.warning(`当前模型最多 ${limit} 个参考${type === "video" ? "视频" : "音频"}`);
+            return;
+        }
+        setMediaReferences((current) => [...current, { type, url: value, name: `${type}${current.length + 1}` }]);
+        setUrl("");
+    };
+
+    const uploadImage = async (file: File) => {
+        if (imageReferences.length >= capabilities.referenceImageLimit) {
+            message.warning(`当前模型最多 ${capabilities.referenceImageLimit} 张参考图`);
+            return;
+        }
+        const uploaded = await uploadReferenceImage(file);
+        setImageReferences((current) => [...current, { id: uploaded.storageKey, name: file.name || `image${current.length + 1}`, type: file.type || "image", dataUrl: uploaded.url, url: uploaded.url, remoteUrl: uploaded.remoteUrl, storageKey: uploaded.storageKey }]);
+        message.success("参考图已上传");
+    };
+
+    const uploadMedia = async (type: "video" | "audio", file: File) => {
+        const limit = type === "video" ? capabilities.referenceVideoLimit : capabilities.referenceAudioLimit;
+        if (!limit || mediaReferences.filter((item) => item.type === type).length >= limit) {
+            message.warning(`当前模型最多 ${limit} 个参考${type === "video" ? "视频" : "音频"}`);
+            return;
+        }
+        const remoteUrl = await uploadReferenceBlobToImageBed(file, file.name || `${type}.mp4`);
+        setMediaReferences((current) => [...current, { type, url: remoteUrl, name: file.name || `${type}${current.length + 1}` }]);
+        message.success(`参考${type === "video" ? "视频" : "音频"}已上传`);
     };
 
     const handleGenerate = async () => {
@@ -42,11 +115,13 @@ export default function VideoPage() {
             message.warning("请输入视频描述");
             return;
         }
-
         setIsGenerating(true);
         try {
-            // TODO: 调用视频生成 API
-            message.success("视频生成任务已提交");
+            if (resultUrl) URL.revokeObjectURL(resultUrl);
+            const runtimeConfig = { ...config, model: selectedModel, videoModel: selectedModel, size: ratio, vquality: quality, videoSeconds: String(duration) };
+            const blob = await requestVideoGeneration(runtimeConfig, prompt.trim(), imageReferences, mediaReferences);
+            setResultUrl(URL.createObjectURL(blob));
+            message.success("视频生成完成");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "生成失败");
         } finally {
@@ -56,153 +131,203 @@ export default function VideoPage() {
 
     return (
         <main className="h-full overflow-auto bg-background text-stone-950 dark:text-stone-100">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
-                {/* 页面标题 */}
-                <header className="border-b border-stone-200 pb-6 dark:border-stone-800">
-                    <p className="text-xs text-stone-500 dark:text-stone-400">视频生成</p>
-                    <h1 className="mt-3 text-3xl font-semibold">视频工作台</h1>
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-6 py-6">
+                <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
+                    <div>
+                        <Typography.Title level={3} className="!mb-1">
+                            视频工作台
+                        </Typography.Title>
+                    </div>
+                    <Space wrap>
+                        <Tag color="purple">{capabilities.market}</Tag>
+                        <Tag>{capabilities.ratios.length} 个比例</Tag>
+                        <Tag>{capabilities.qualities.join(" / ")}</Tag>
+                        <Tag>{capabilities.durations.map((value) => `${value}s`).join(" / ")}</Tag>
+                    </Space>
                 </header>
 
-                {/* 主体内容 */}
-                <div className="grid gap-6 lg:grid-cols-[480px_1fr]">
-                    {/* 左侧配置面板 */}
-                    <aside className="space-y-6">
-                        <Card className="border-stone-200 dark:border-stone-800">
-                            <Space direction="vertical" size={20} style={{ width: "100%" }}>
-                                {/* 视频模型 */}
-                                <div>
-                                    <div className="mb-2 flex items-center justify-between">
-                                        <Typography.Text className="text-sm font-medium">视频模型</Typography.Text>
-                                    </div>
-                                    <Select
-                                        size="large"
-                                        value={selectedModel}
-                                        onChange={handleModelChange}
-                                        placeholder="选择模型"
-                                        className="w-full"
-                                        options={videoModels.map((m) => ({ label: m, value: m }))}
-                                    />
-                                    {selectedModel && (
-                                        <Typography.Text type="secondary" className="mt-2 block text-xs">
-                                            {selectedModel} - 支持文生视频和图生视频
-                                        </Typography.Text>
-                                    )}
-                                </div>
+                <div className="grid gap-5 lg:grid-cols-[440px_1fr]">
+                    <Card className="border-stone-200 dark:border-stone-800" styles={{ body: { padding: 18 } }}>
+                        <Space direction="vertical" size={18} className="w-full">
+                            <SectionTitle icon={<Film className="size-4" />} title="视频模型" />
+                            <SelectModel value={selectedModel} models={videoModels} onChange={handleModelChange} />
 
-                                {/* 画面比例 */}
-                                <div>
-                                    <Typography.Text className="mb-2 block text-sm font-medium">画面比例</Typography.Text>
-                                    <Radio.Group value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full" size="large">
-                                        <Radio.Button value="16:9" className="w-1/3 text-center">
-                                            横版
+                            <ControlBlock title="画面比例">
+                                <Radio.Group value={ratio} onChange={(event) => setRatio(event.target.value)} optionType="button" buttonStyle="solid" className="w-full">
+                                    {capabilities.ratios.map((item) => (
+                                        <Radio.Button key={item} value={item}>
+                                            {item}
                                         </Radio.Button>
-                                        <Radio.Button value="9:16" className="w-1/3 text-center">
-                                            竖屏
-                                        </Radio.Button>
-                                        <Radio.Button value="1:1" className="w-1/3 text-center">
-                                            方形
-                                        </Radio.Button>
-                                    </Radio.Group>
-                                    <Typography.Text type="secondary" className="mt-2 block text-xs">
-                                        {aspectRatio}
-                                    </Typography.Text>
-                                </div>
+                                    ))}
+                                </Radio.Group>
+                            </ControlBlock>
 
-                                {/* 时长 */}
-                                <div>
-                                    <Typography.Text className="mb-2 block text-sm font-medium">时长</Typography.Text>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {[4, 6, 8, 10, 12, 15].map((d) => (
-                                            <Button key={d} size="large" type={duration === d ? "primary" : "default"} onClick={() => setDuration(d as Duration)} className="w-full">
-                                                {d}s
-                                            </Button>
-                                        ))}
-                                    </div>
-                                    <Typography.Text type="secondary" className="mt-2 block text-xs">
-                                        当前: {duration}s
-                                    </Typography.Text>
-                                </div>
+                            <ControlBlock title="画质">
+                                <Segmented value={quality} onChange={(value) => setQuality(String(value))} options={VIDEO_QUALITY_OPTIONS.filter((item) => capabilities.qualities.includes(item.value))} block />
+                            </ControlBlock>
 
-                                {/* 参考素材 */}
-                                <div>
-                                    <Typography.Text className="mb-2 block text-sm font-medium">
-                                        参考素材 <Typography.Text type="secondary">(可选)</Typography.Text>
-                                    </Typography.Text>
+                            <ControlBlock title={`时长 ${duration}s`} icon={<Clock3 className="size-4" />}>
+                                <Slider min={Math.min(...capabilities.durations)} max={Math.max(...capabilities.durations)} step={null} marks={Object.fromEntries(capabilities.durations.map((item) => [item, `${item}s`]))} value={duration} onChange={setDuration} />
+                            </ControlBlock>
 
-                                    {/* 上传参考图 */}
-                                    <Upload.Dragger className="mb-2" style={{ padding: "16px" }}>
-                                        <div className="flex flex-col items-center">
-                                            <CloudUploadOutlined className="mb-2 text-2xl text-blue-500" />
-                                            <Typography.Text className="text-xs">上传参考图</Typography.Text>
-                                            <Typography.Text type="secondary" className="text-xs">
-                                                最多 4 张,每张 ≤ 20MB
-                                            </Typography.Text>
-                                        </div>
-                                    </Upload.Dragger>
+                            <ControlBlock title="参考素材">
+                                <ReferenceRow
+                                    icon={<ImageIcon className="size-4" />}
+                                    title="参考图"
+                                    limit={capabilities.referenceImageLimit}
+                                    count={imageReferences.length}
+                                    value={imageUrl}
+                                    placeholder="HTTPS 图片 URL"
+                                    accept="image/*"
+                                    disabled={!capabilities.referenceImageLimit}
+                                    onValueChange={setImageUrl}
+                                    onAdd={addImageUrl}
+                                    onUpload={(file) => uploadImage(file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                />
+                                <ReferenceRow
+                                    icon={<Video className="size-4" />}
+                                    title="参考视频"
+                                    limit={capabilities.referenceVideoLimit}
+                                    count={mediaReferences.filter((item) => item.type === "video").length}
+                                    value={videoUrlInput}
+                                    placeholder="HTTPS 视频 URL"
+                                    accept="video/*"
+                                    disabled={!capabilities.referenceVideoLimit}
+                                    extra={capabilities.referenceVideoLimit ? `总时长建议不超过 ${capabilities.referenceVideoMaxSeconds}s` : "当前模型不支持"}
+                                    onValueChange={setVideoUrlInput}
+                                    onAdd={() => addMediaUrl("video", videoUrlInput, setVideoUrlInput)}
+                                    onUpload={(file) => uploadMedia("video", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                />
+                                <ReferenceRow
+                                    icon={<Music2 className="size-4" />}
+                                    title="参考音频"
+                                    limit={capabilities.referenceAudioLimit}
+                                    count={mediaReferences.filter((item) => item.type === "audio").length}
+                                    value={audioUrlInput}
+                                    placeholder="HTTPS 音频 URL"
+                                    accept="audio/*"
+                                    disabled={!capabilities.referenceAudioLimit}
+                                    extra={capabilities.referenceAudioLimit ? undefined : "当前模型不支持"}
+                                    onValueChange={setAudioUrlInput}
+                                    onAdd={() => addMediaUrl("audio", audioUrlInput, setAudioUrlInput)}
+                                    onUpload={(file) => uploadMedia("audio", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                />
+                                <MaterialTags images={imageReferences} media={mediaReferences} onRemoveImage={(id) => setImageReferences((current) => current.filter((item) => item.id !== id))} onRemoveMedia={(url) => setMediaReferences((current) => current.filter((item) => item.url !== url))} />
+                            </ControlBlock>
 
-                                    {/* 参考图 URL */}
-                                    <div className="mb-3 flex gap-2">
-                                        <Input placeholder="或输入图片 URL" size="large" />
-                                        <Button size="large">添加</Button>
-                                    </div>
+                            <ControlBlock title="视频描述">
+                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述镜头、主体、动作、场景、风格和声音。例如：高光泽产品舞台上，一辆白色超跑由全息零件逐步组装成型，镜头环绕揭示。" rows={7} className="resize-none" />
+                            </ControlBlock>
 
-                                    {/* 上传参考视频 */}
-                                    <Upload.Dragger className="mb-2" style={{ padding: "16px" }}>
-                                        <div className="flex flex-col items-center">
-                                            <CloudUploadOutlined className="mb-2 text-2xl text-blue-500" />
-                                            <Typography.Text className="text-xs">上传参考视频</Typography.Text>
-                                            <Typography.Text type="secondary" className="text-xs">
-                                                最多 1 个,≤ 50MB
-                                            </Typography.Text>
-                                        </div>
-                                    </Upload.Dragger>
+                            <Button type="primary" size="large" block icon={<PlayCircleOutlined />} loading={isGenerating} onClick={handleGenerate} className="h-12 text-base font-medium">
+                                生成视频
+                            </Button>
+                        </Space>
+                    </Card>
 
-                                    {/* 参考视频 URL */}
-                                    <div className="flex gap-2">
-                                        <Input placeholder="或输入视频 URL" size="large" />
-                                        <Button size="large">添加</Button>
-                                    </div>
-                                </div>
-
-                                {/* Prompt */}
-                                <div>
-                                    <Typography.Text className="mb-2 block text-sm font-medium">视频描述</Typography.Text>
-                                    <Input.TextArea
-                                        value={prompt}
-                                        onChange={(e) => setPrompt(e.target.value)}
-                                        placeholder="描述镜头、主体、动作和画面风格&#10;例如: 一只橘猫在阳光下慵懒地打哈欠，镜头缓慢推进，4K 高清画质"
-                                        rows={6}
-                                        size="large"
-                                        className="resize-none"
-                                    />
-                                </div>
-
-                                {/* 生成按钮 */}
-                                <Button type="primary" size="large" block icon={<PlayCircleOutlined />} loading={isGenerating} onClick={handleGenerate} className="h-12 text-base font-medium">
-                                    生成视频
-                                </Button>
-                            </Space>
-                        </Card>
-                    </aside>
-
-                    {/* 右侧预览区 */}
-                    <section className="flex min-h-[500px] items-center justify-center rounded-lg border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                        {videoUrl ? (
-                            <video src={videoUrl} controls className="max-h-[600px] max-w-full rounded-lg shadow-lg" />
+                    <section className="flex min-h-[640px] items-center justify-center rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
+                        {resultUrl ? (
+                            <video src={resultUrl} controls className="max-h-[720px] max-w-full rounded-lg bg-black shadow-lg" />
                         ) : (
-                            <div className="flex flex-col items-center gap-4 text-center">
-                                <Video className="size-16 text-stone-300 dark:text-stone-700" />
-                                <div>
-                                    <Typography.Text className="block text-base font-medium">还没有视频</Typography.Text>
-                                    <Typography.Text type="secondary" className="mt-1 block text-sm">
-                                        选择模型并填写描述后开始生成
-                                    </Typography.Text>
-                                </div>
-                            </div>
+                            <Empty image={<Video className="mx-auto size-16 text-stone-300 dark:text-stone-700" />} description="生成结果会显示在这里" />
                         )}
                     </section>
                 </div>
             </div>
         </main>
     );
+}
+
+function SelectModel({ value, models, onChange }: { value: string; models: string[]; onChange: (value: string) => void }) {
+    return <Segmented value={value} onChange={(next) => onChange(String(next))} options={models.map((model) => ({ label: model, value: model }))} block />;
+}
+
+function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) {
+    return (
+        <div className="flex items-center gap-2 text-sm font-semibold">
+            {icon}
+            {title}
+        </div>
+    );
+}
+
+function ControlBlock({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
+    return (
+        <div className="space-y-2.5">
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-200">
+                {icon}
+                {title}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+function ReferenceRow({ icon, title, limit, count, value, placeholder, accept, disabled, extra, onValueChange, onAdd, onUpload }: { icon: ReactNode; title: string; limit: number; count: number; value: string; placeholder: string; accept: string; disabled?: boolean; extra?: string; onValueChange: (value: string) => void; onAdd: () => void; onUpload: (file: File) => Promise<void> }) {
+    return (
+        <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                    {icon}
+                    {title}
+                </div>
+                <Typography.Text type="secondary" className="text-xs">
+                    {count}/{limit}
+                </Typography.Text>
+            </div>
+            <div className="flex gap-2">
+                <Input value={value} disabled={disabled} placeholder={placeholder} prefix={<LinkOutlined />} onChange={(event) => onValueChange(event.target.value)} />
+                <Button disabled={disabled} onClick={onAdd}>
+                    添加
+                </Button>
+                <Upload
+                    showUploadList={false}
+                    accept={accept}
+                    disabled={disabled}
+                    beforeUpload={(file) => {
+                        void onUpload(file);
+                        return Upload.LIST_IGNORE;
+                    }}
+                >
+                    <Button disabled={disabled} icon={<CloudUploadOutlined />}>
+                        上传
+                    </Button>
+                </Upload>
+            </div>
+            {extra ? <Typography.Text type="secondary" className="mt-1 block text-xs">{extra}</Typography.Text> : null}
+        </div>
+    );
+}
+
+function MaterialTags({ images, media, onRemoveImage, onRemoveMedia }: { images: ReferenceImage[]; media: VideoReferenceMaterial[]; onRemoveImage: (id: string) => void; onRemoveMedia: (url: string) => void }) {
+    if (!images.length && !media.length) return null;
+    const videos = media.filter((item) => item.type === "video");
+    const audios = media.filter((item) => item.type === "audio");
+    return (
+        <div className="flex flex-wrap gap-1.5">
+            {images.map((item, index) => (
+                <Tag key={item.id} closable onClose={() => onRemoveImage(item.id)}>
+                    @image{index + 1}
+                </Tag>
+            ))}
+            {videos.map((item, index) => (
+                <Tag key={item.url} closable onClose={() => onRemoveMedia(item.url)}>
+                    @video{index + 1}
+                </Tag>
+            ))}
+            {audios.map((item, index) => (
+                <Tag key={item.url} closable onClose={() => onRemoveMedia(item.url)}>
+                    @audio{index + 1}
+                </Tag>
+            ))}
+        </div>
+    );
+}
+
+function isRemoteUrl(value: string) {
+    return /^https:\/\//i.test(value.trim());
+}
+
+function newID() {
+    return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

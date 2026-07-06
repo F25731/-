@@ -101,6 +101,7 @@
 | `default_tier` | string | 图片分组默认清晰度，新建画布节点或切换到该分组时优先使用 |
 | `supported_sizes` | json | 图片分组支持的画布比例，或视频模型支持的生成尺寸，例如 `auto`、`1:1`、`16:9`、`1280x720`、`3840x2160` |
 | `reference_limit` | number | 图片分组或视频模型允许上传、粘贴、携带的参考图数量 |
+| `video_capabilities` | json | 视频模型能力配置，包含市场/场景、支持比例、画质、时长、默认值、参考图/参考视频/参考音频数量和参考视频总时长上限 |
 | `enabled`    | bool   | 是否启用                   |
 | `remark`     | string | 备注                     |
 | `created_at` | string | 创建时间                   |

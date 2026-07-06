@@ -7,6 +7,7 @@ import { persist } from "zustand/middleware";
 import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 import { DEFAULT_IMAGE_ASPECT_VALUES, IMAGE_MODEL_TIERS, type ImageModelTier } from "@/constant/image-model-options";
+import { normalizeVideoCapabilities, type VideoModelCapabilities } from "@/constant/video-model-options";
 import { normalizeImageApiKeys, normalizeImageKeyTier, type ImageKeyTier } from "@/types/api-keys";
 
 export const DEFAULT_POOL_API_BASE_URL = "https://api.zmoapi.cn";
@@ -25,6 +26,7 @@ export type StoredUserModel = {
     defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
+    videoCapabilities?: VideoModelCapabilities;
     enabled: boolean;
 };
 
@@ -57,6 +59,7 @@ export type AiConfig = {
     modelTierOptions: Record<string, string[]>;
     modelDefaultTiers: Record<string, string>;
     modelReferenceLimits: Record<string, number>;
+    modelVideoCapabilities: Record<string, Required<VideoModelCapabilities>>;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -84,6 +87,7 @@ export const defaultConfig: AiConfig = {
     modelTierOptions: {},
     modelDefaultTiers: {},
     modelReferenceLimits: {},
+    modelVideoCapabilities: {},
 };
 
 type ConfigStore = {
@@ -110,10 +114,11 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         const promptModels = configuredModels.filter((model) => model.type === "prompt").map((model) => model.name);
         const models = configuredModels.map((model) => model.name);
         const modelTypes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type]));
-        const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : model.type === "video" ? ["auto", "1280x720"] : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
+        const modelVideoCapabilities: Record<string, Required<VideoModelCapabilities>> = Object.fromEntries(configuredModels.filter((model) => model.type === "video").map((model) => [model.name, normalizeVideoCapabilities(model.videoCapabilities)]));
+        const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "video" ? modelVideoCapabilities[model.name]?.ratios || ["16:9", "9:16", "1:1"] : model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
         const modelTierOptions = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]) : []]));
         const modelDefaultTiers = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier])) : ""]));
-        const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, normalizeReferenceLimit(model.referenceLimit)]));
+        const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "video" ? normalizeVideoCapabilities(model.videoCapabilities).referenceImageLimit : normalizeReferenceLimit(model.referenceLimit)]));
         const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "";
         const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
         const parseModel = parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
@@ -139,6 +144,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions,
             modelDefaultTiers,
             modelReferenceLimits,
+            modelVideoCapabilities,
         };
     }
 
@@ -159,6 +165,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions: config.modelTierOptions || {},
             modelDefaultTiers: config.modelDefaultTiers || {},
             modelReferenceLimits: config.modelReferenceLimits || {},
+            modelVideoCapabilities: config.modelVideoCapabilities || {},
         };
     }
 
@@ -180,6 +187,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions: {},
             modelDefaultTiers: {},
             modelReferenceLimits: {},
+            modelVideoCapabilities: {},
         };
     }
 
@@ -198,6 +206,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         modelTierOptions: config.modelTierOptions || {},
         modelDefaultTiers: config.modelDefaultTiers || {},
         modelReferenceLimits: config.modelReferenceLimits || {},
+        modelVideoCapabilities: config.modelVideoCapabilities || {},
     };
 }
 
@@ -324,6 +333,7 @@ export const useConfigStore = create<ConfigStore>()(
                         modelTierOptions: config.modelTierOptions || {},
                         modelDefaultTiers: config.modelDefaultTiers || {},
                         modelReferenceLimits: config.modelReferenceLimits || {},
+                        modelVideoCapabilities: config.modelVideoCapabilities || {},
                     },
                 };
             },
@@ -383,6 +393,10 @@ export function defaultImageTierForModel(config: AiConfig, modelName: string) {
 
 export function imageReferenceLimit(config: AiConfig, modelName = config.model || config.imageModel) {
     return normalizeReferenceLimit(config.modelReferenceLimits[modelName]);
+}
+
+export function videoCapabilitiesForModel(config: AiConfig, modelName = config.videoModel || config.model) {
+    return normalizeVideoCapabilities(config.modelVideoCapabilities?.[modelName]);
 }
 
 function normalizeReferenceLimit(value: number | undefined) {

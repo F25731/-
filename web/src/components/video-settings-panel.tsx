@@ -4,11 +4,11 @@ import { type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
+import { videoCapabilitiesForModel, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
-    { value: "720", label: "720p" },
-    { value: "480", label: "480p" },
+    { value: "720p", label: "720p" },
+    { value: "480p", label: "480p" },
 ];
 
 const sizeOptions = [
@@ -35,6 +35,10 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
+    const capabilities = videoCapabilitiesForModel(config);
+    const qualityOptions = capabilities.qualities.length ? capabilities.qualities.map((value) => ({ value, label: value.toUpperCase() === "4K" ? "4K" : value })) : resolutionOptions;
+    const dynamicSizeOptions = capabilities.ratios.length ? capabilities.ratios.map((value) => ({ value, label: value, ...readSizeDimensions(value) })) : sizeOptions;
+    const durationOptions = capabilities.durations.length ? capabilities.durations : secondOptions;
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
         onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
@@ -46,8 +50,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 <SettingGroup title="清晰度" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                        {qualityOptions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === normalizeVideoResolutionValue(item.value)} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
@@ -61,7 +65,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {sizeOptions.map((item) => (
+                        {dynamicSizeOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -83,7 +87,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
                 <SettingGroup title="秒数" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {secondOptions.map((value) => (
+                        {durationOptions.map((value) => (
                             <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                 {value}s
                             </OptionPill>
@@ -111,6 +115,7 @@ export function videoSecondsLabel(value: string) {
 
 export function normalizeVideoSizeValue(value: string) {
     if (value === "auto") return "auto";
+    if (/^\d+:\d+$/.test(value || "")) return value;
     if (/^\d+x\d+$/.test(value || "")) return value;
     return ["9:16", "2:3", "3:4"].includes(value) ? "720x1280" : "1280x720";
 }
@@ -176,6 +181,8 @@ function SizePreview({ width, height, color }: { width: number; height: number; 
 
 function readSizeDimensions(size: string) {
     if (size === "auto") return { width: 0, height: 0 };
+    const ratioMatch = size.match(/^(\d+):(\d+)$/);
+    if (ratioMatch) return { width: Number(ratioMatch[1]) || 16, height: Number(ratioMatch[2]) || 9 };
     const match = size.match(/^(\d+)x(\d+)$/);
     return { width: Number(match?.[1]) || 1280, height: Number(match?.[2]) || 720 };
 }

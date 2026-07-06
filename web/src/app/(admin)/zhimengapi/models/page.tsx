@@ -5,6 +5,7 @@ import { App, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space
 import { useEffect, useState } from "react";
 
 import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
+import { DEFAULT_VIDEO_CAPABILITIES, VIDEO_DURATION_OPTIONS, VIDEO_QUALITY_OPTIONS, VIDEO_RATIO_OPTIONS, normalizeVideoCapabilities } from "@/constant/video-model-options";
 import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -28,16 +29,6 @@ const modelTypeColors: Record<ModelType, string> = {
 };
 
 const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
-const videoSizeOptions = [
-    { label: "自动", value: "auto" },
-    { label: "720p 横屏 1280x720", value: "1280x720" },
-    { label: "720p 竖屏 720x1280", value: "720x1280" },
-    { label: "方形 1024x1024", value: "1024x1024" },
-    { label: "1080p 横屏 1920x1080", value: "1920x1080" },
-    { label: "1080p 竖屏 1080x1920", value: "1080x1920" },
-    { label: "4K 横屏 3840x2160", value: "3840x2160" },
-    { label: "4K 竖屏 2160x3840", value: "2160x3840" },
-];
 
 function isVisualGenerationType(type: ModelType) {
     return type === "image" || type === "video";
@@ -45,10 +36,6 @@ function isVisualGenerationType(type: ModelType) {
 
 function defaultSupportedSizes(type: ModelType) {
     return type === "video" ? ["auto", "1280x720"] : ["auto", "1:1"];
-}
-
-function supportedSizeOptions(type: ModelType) {
-    return type === "video" ? videoSizeOptions : aspectOptions;
 }
 
 export default function ModelsPage() {
@@ -130,10 +117,11 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, isDefault: Boolean(model.isDefault) });
+            const videoCapabilities = normalizeVideoCapabilities(model.videoCapabilities || { ratios: model.supportedSizes, referenceImageLimit: model.referenceLimit });
+            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, videoCapabilities, isDefault: Boolean(model.isDefault) });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, isDefault: false });
+            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, videoCapabilities: DEFAULT_VIDEO_CAPABILITIES, isDefault: false });
         }
     };
 
@@ -258,16 +246,19 @@ export default function ModelsPage() {
                             },
                             { title: "API 地址", dataIndex: "apiUrl", ellipsis: true },
                             {
-                                title: "参考图",
-                                dataIndex: "referenceLimit",
-                                width: 90,
-                                render: (value: number | undefined, record) => (isVisualGenerationType(record.type) ? `${value || 4} 张` : "-"),
+                                title: "参考素材",
+                                width: 150,
+                                render: (_, record) => {
+                                    if (record.type === "image") return `${record.referenceLimit || 4} 张图`;
+                                    if (record.type !== "video") return "-";
+                                    const capabilities = normalizeVideoCapabilities(record.videoCapabilities || { referenceImageLimit: record.referenceLimit });
+                                    return `${capabilities.referenceImageLimit} 图 / ${capabilities.referenceVideoLimit} 视频 / ${capabilities.referenceAudioLimit} 音频`;
+                                },
                             },
                             {
-                                title: "支持比例",
-                                dataIndex: "supportedSizes",
-                                width: 180,
-                                render: (value: string[] | undefined, record) => (isVisualGenerationType(record.type) ? <Typography.Text type="secondary">{(value?.length ? value : defaultSupportedSizes(record.type)).join("、")}</Typography.Text> : "-"),
+                                title: "能力",
+                                width: 260,
+                                render: (_, record) => (record.type === "video" ? <VideoCapabilitySummary model={record} /> : isVisualGenerationType(record.type) ? <Typography.Text type="secondary">{(record.supportedSizes?.length ? record.supportedSizes : defaultSupportedSizes(record.type)).join("、")}</Typography.Text> : "-"),
                             },
                             {
                                 title: "状态",
@@ -369,11 +360,46 @@ export default function ModelsPage() {
                             </Form.Item>
                             {currentType === "video" ? (
                                 <>
-                                    <Form.Item name="supportedSizes" label="支持尺寸" rules={[{ required: true, message: "请选择支持尺寸" }]} extra="用户选择该视频模型后，画布视频参数优先按这里的尺寸限制。">
-                                        <Select mode="multiple" options={supportedSizeOptions(currentType)} />
+                                    <div className="mb-4 grid grid-cols-2 gap-3">
+                                        <Form.Item name={["videoCapabilities", "market"]} label="市场 / 场景" className="!mb-0" extra="例如：通用、写实、动漫、广告、产品展示。">
+                                            <Input placeholder="通用" />
+                                        </Form.Item>
+                                        <Form.Item name={["videoCapabilities", "defaultRatio"]} label="默认比例" className="!mb-0">
+                                            <Select options={VIDEO_RATIO_OPTIONS} />
+                                        </Form.Item>
+                                    </div>
+                                    <Form.Item name={["videoCapabilities", "ratios"]} label="画面比例" rules={[{ required: true, message: "请选择支持比例" }]} extra="前台视频工作台会按这里动态展示比例按钮。">
+                                        <Select mode="multiple" options={VIDEO_RATIO_OPTIONS} />
                                     </Form.Item>
-                                    <Form.Item name="referenceLimit" label="参考图数量" rules={[{ required: true, message: "请输入参考图数量" }]} extra="用于限制图生视频、首尾帧或参考图生成时最多携带多少张参考图。">
-                                        <InputNumber min={1} max={20} precision={0} className="!w-full" placeholder="例如：4" />
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Form.Item name={["videoCapabilities", "qualities"]} label="画质" rules={[{ required: true, message: "请选择支持画质" }]}>
+                                            <Select mode="multiple" options={VIDEO_QUALITY_OPTIONS} />
+                                        </Form.Item>
+                                        <Form.Item name={["videoCapabilities", "defaultQuality"]} label="默认画质">
+                                            <Select options={VIDEO_QUALITY_OPTIONS} />
+                                        </Form.Item>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Form.Item name={["videoCapabilities", "durations"]} label="时长" rules={[{ required: true, message: "请选择支持时长" }]} extra="单位：秒。">
+                                            <Select mode="multiple" options={VIDEO_DURATION_OPTIONS.map((value) => ({ label: `${value}s`, value }))} />
+                                        </Form.Item>
+                                        <Form.Item name={["videoCapabilities", "defaultDuration"]} label="默认时长">
+                                            <Select options={VIDEO_DURATION_OPTIONS.map((value) => ({ label: `${value}s`, value }))} />
+                                        </Form.Item>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-3">
+                                        <Form.Item name={["videoCapabilities", "referenceImageLimit"]} label="参考图" extra="0 表示不支持。">
+                                            <InputNumber min={0} max={20} precision={0} className="!w-full" />
+                                        </Form.Item>
+                                        <Form.Item name={["videoCapabilities", "referenceVideoLimit"]} label="参考视频" extra="0 表示不支持。">
+                                            <InputNumber min={0} max={20} precision={0} className="!w-full" />
+                                        </Form.Item>
+                                        <Form.Item name={["videoCapabilities", "referenceAudioLimit"]} label="参考音频" extra="0 表示不支持。">
+                                            <InputNumber min={0} max={5} precision={0} className="!w-full" />
+                                        </Form.Item>
+                                    </div>
+                                    <Form.Item name={["videoCapabilities", "referenceVideoMaxSeconds"]} label="参考视频总时长上限" extra="单位：秒，用于提示用户和限制上传/填写。">
+                                        <InputNumber min={1} max={300} precision={0} className="!w-full" />
                                     </Form.Item>
                                 </>
                             ) : null}
@@ -433,15 +459,29 @@ function TierModelSummary({ model }: { model: AdminModel }) {
     );
 }
 
+function VideoCapabilitySummary({ model }: { model: AdminModel }) {
+    const capabilities = normalizeVideoCapabilities(model.videoCapabilities || { ratios: model.supportedSizes, referenceImageLimit: model.referenceLimit });
+    return (
+        <Space size={4} wrap>
+            <Tag color="purple">{capabilities.market}</Tag>
+            <Tag>{capabilities.ratios.join("/")}</Tag>
+            <Tag>{capabilities.qualities.join("/")}</Tag>
+            <Tag>{capabilities.durations.map((value) => `${value}s`).join("/")}</Tag>
+        </Space>
+    );
+}
+
 function normalizeModelPayload(values: AdminModel) {
     if (values.type !== "image") {
+        const videoCapabilities = values.type === "video" ? normalizeVideoCapabilities(values.videoCapabilities) : undefined;
         return {
             ...values,
             apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "",
             tierModels: {},
             defaultTier: "",
-            supportedSizes: values.type === "video" ? values.supportedSizes?.length ? values.supportedSizes : defaultSupportedSizes(values.type) : [],
-            referenceLimit: values.type === "video" ? Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))) : 4,
+            supportedSizes: values.type === "video" ? videoCapabilities?.ratios || defaultSupportedSizes(values.type) : [],
+            referenceLimit: values.type === "video" ? videoCapabilities?.referenceImageLimit || 0 : 4,
+            videoCapabilities: values.type === "video" ? videoCapabilities : undefined,
             isDefault: values.type === "detail_prompt" ? Boolean(values.isDefault) : false,
         };
     }
@@ -455,6 +495,7 @@ function normalizeModelPayload(values: AdminModel) {
         defaultTier,
         supportedSizes: values.supportedSizes?.length ? values.supportedSizes : ["auto"],
         referenceLimit: Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))),
+        videoCapabilities: undefined,
         isDefault: false,
     };
 }

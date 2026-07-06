@@ -1,9 +1,15 @@
 import axios from "axios";
 
 import { ensureReferenceImagesRemoteUrls, imageAiUrl } from "@/services/image-bed";
-import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRuntimeConfig, videoCapabilitiesForModel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
+
+export type VideoReferenceMaterial = {
+    type: "video" | "audio";
+    url: string;
+    name?: string;
+};
 
 type VideoResponse = {
     id?: string;
@@ -38,10 +44,10 @@ function aiHeaders(config: AiConfig) {
     return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
+export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mediaReferences: VideoReferenceMaterial[] = []) {
     const displayModel = config.model || config.videoModel;
     const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
-    const body = await buildVideoRequestBody(config, model, prompt, references);
+    const body = await buildVideoRequestBody(config, model, prompt, references, mediaReferences);
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
         const taskId = created.id || created.task_id;
@@ -60,12 +66,15 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     }
 }
 
-async function buildVideoRequestBody(config: AiConfig, model: string, prompt: string, references: ReferenceImage[]): Promise<VideoRequestBody> {
+async function buildVideoRequestBody(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], mediaReferences: VideoReferenceMaterial[]): Promise<VideoRequestBody> {
+    const capabilities = videoCapabilitiesForModel(config, config.videoModel || config.model);
     const seconds = normalizeVideoSeconds(config.videoSeconds);
     const size = normalizeVideoSizeForModel(config, model);
     const resolution = normalizeVideoResolution(config.vquality, size);
-    const remoteReferences = await ensureReferenceImagesRemoteUrls(references.slice(0, videoReferenceLimit(config, model)));
+    const remoteReferences = await ensureReferenceImagesRemoteUrls(references.slice(0, capabilities.referenceImageLimit || videoReferenceLimit(config, model)));
     const images = remoteReferences.map(imageAiUrl).filter((url): url is string => Boolean(url));
+    const videos = mediaReferences.filter((item) => item.type === "video").slice(0, capabilities.referenceVideoLimit).map((item) => item.url.trim()).filter(Boolean);
+    const audios = mediaReferences.filter((item) => item.type === "audio").slice(0, capabilities.referenceAudioLimit).map((item) => item.url.trim()).filter(Boolean);
     const body: VideoRequestBody = {
         model,
         prompt,
@@ -74,10 +83,13 @@ async function buildVideoRequestBody(config: AiConfig, model: string, prompt: st
         metadata: {
             durationSeconds: Number(seconds),
             resolution,
+            quality: resolution,
+            aspectRatio: size,
         },
     };
     if (size) body.size = size;
     applyReferenceImages(body, model, images);
+    applyReferenceContent(body, images, videos, audios);
     return body;
 }
 
@@ -96,6 +108,16 @@ function applyReferenceImages(body: VideoRequestBody, model: string, images: str
     body.images = images;
 }
 
+function applyReferenceContent(body: VideoRequestBody, images: string[], videos: string[], audios: string[]) {
+    const content = [
+        ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+        ...videos.map((url) => ({ type: "video_url", video_url: { url } })),
+        ...audios.map((url) => ({ type: "audio_url", audio_url: { url } })),
+    ];
+    if (!content.length) return;
+    body.metadata = { ...(body.metadata || {}), content };
+}
+
 function videoReferenceLimit(config: AiConfig, model: string) {
     const configured = config.modelReferenceLimits[model];
     const normalized = Math.floor(Math.abs(Number(configured)) || 4);
@@ -110,6 +132,7 @@ function normalizeVideoSeconds(value: string) {
 function normalizeVideoSize(value: string) {
     if (value === "auto") return null;
     const size = value || "1280x720";
+    if (/^\d+:\d+$/.test(size)) return size;
     if (/^\d+x\d+$/.test(size)) return size;
     return ["9:16", "2:3", "3:4"].includes(size) ? "720x1280" : "1280x720";
 }

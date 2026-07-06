@@ -5,6 +5,7 @@ import { App, Button, Form, Input, Modal, Space, Tag, Typography } from "antd";
 import { KeyRound } from "lucide-react";
 
 import { IMAGE_MODEL_TIERS } from "@/constant/image-model-options";
+import { normalizeVideoCapabilities } from "@/constant/video-model-options";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { USER_MODEL_CONFIG_KEY, useConfigStore } from "@/stores/use-config-store";
 
@@ -188,12 +189,20 @@ function ImageGroupMeta({ model }: { model: AdminModel }) {
 }
 
 function VideoModelMeta({ model }: { model: AdminModel }) {
+    const capabilities = normalizeVideoCapabilities(model.videoCapabilities || { ratios: model.supportedSizes, referenceImageLimit: model.referenceLimit });
     return (
         <div className="mb-3 flex flex-wrap gap-1.5">
-            {(model.supportedSizes?.length ? model.supportedSizes : ["auto", "1280x720"]).map((size) => (
-                <Tag key={size}>{size}</Tag>
+            <Tag color="purple">{capabilities.market}</Tag>
+            {capabilities.ratios.map((ratio) => (
+                <Tag key={ratio}>{ratio}</Tag>
             ))}
-            <Tag color="purple">参考图 {model.referenceLimit || 4} 张</Tag>
+            {capabilities.qualities.map((quality) => (
+                <Tag key={quality}>{quality}</Tag>
+            ))}
+            <Tag>{capabilities.durations.map((value) => `${value}s`).join(" / ")}</Tag>
+            <Tag color="purple">参考图 {capabilities.referenceImageLimit} 张</Tag>
+            <Tag color="purple">参考视频 {capabilities.referenceVideoLimit} 个</Tag>
+            {capabilities.referenceAudioLimit ? <Tag color="purple">参考音频 {capabilities.referenceAudioLimit} 个</Tag> : null}
         </div>
     );
 }

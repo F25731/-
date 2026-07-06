@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPost, compactApiParams } from "@/services/api/request";
 import type { Prompt, PromptListResponse } from "@/services/api/prompts";
+import type { VideoModelCapabilities } from "@/constant/video-model-options";
 
 export type AdminPromptCategory = {
     category: string;
@@ -252,6 +253,7 @@ export type AdminModel = {
     defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
+    videoCapabilities?: VideoModelCapabilities;
     isDefault?: boolean;
     enabled: boolean;
     remark: string;
