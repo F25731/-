@@ -245,8 +245,6 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
                 model: aiModel(config),
                 prompt: withSystemPrompt(config, prompt),
                 n,
-                response_format: "b64_json",
-                output_format: "png",
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
             },
@@ -272,8 +270,6 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 model: aiModel(config),
                 prompt: withSystemPrompt(config, requestPrompt),
                 n,
-                response_format: "b64_json",
-                output_format: "png",
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 images: remoteReferences
