@@ -145,6 +145,7 @@ export function AppConfigModal() {
                                         {apiKeys[model.id]?.trim() ? <Tag color="success">已填写</Tag> : <Tag>未填写</Tag>}
                                     </div>
                                     {model.type === "image" ? <ImageGroupMeta model={model} /> : null}
+                                    {model.type === "video" ? <VideoModelMeta model={model} /> : null}
                                     <Input.Password
                                         prefix={<KeyRound className="size-4 text-stone-400" />}
                                         placeholder="sk-..."
@@ -180,6 +181,17 @@ function ImageGroupMeta({ model }: { model: AdminModel }) {
                     {tier}
                     {model.defaultTier === tier ? " 默认" : ""}
                 </Tag>
+            ))}
+            <Tag color="purple">参考图 {model.referenceLimit || 4} 张</Tag>
+        </div>
+    );
+}
+
+function VideoModelMeta({ model }: { model: AdminModel }) {
+    return (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+            {(model.supportedSizes?.length ? model.supportedSizes : ["auto", "1280x720"]).map((size) => (
+                <Tag key={size}>{size}</Tag>
             ))}
             <Tag color="purple">参考图 {model.referenceLimit || 4} 张</Tag>
         </div>

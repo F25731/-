@@ -28,6 +28,28 @@ const modelTypeColors: Record<ModelType, string> = {
 };
 
 const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
+const videoSizeOptions = [
+    { label: "自动", value: "auto" },
+    { label: "720p 横屏 1280x720", value: "1280x720" },
+    { label: "720p 竖屏 720x1280", value: "720x1280" },
+    { label: "方形 1024x1024", value: "1024x1024" },
+    { label: "1080p 横屏 1920x1080", value: "1920x1080" },
+    { label: "1080p 竖屏 1080x1920", value: "1080x1920" },
+    { label: "4K 横屏 3840x2160", value: "3840x2160" },
+    { label: "4K 竖屏 2160x3840", value: "2160x3840" },
+];
+
+function isVisualGenerationType(type: ModelType) {
+    return type === "image" || type === "video";
+}
+
+function defaultSupportedSizes(type: ModelType) {
+    return type === "video" ? ["auto", "1280x720"] : ["auto", "1:1"];
+}
+
+function supportedSizeOptions(type: ModelType) {
+    return type === "video" ? videoSizeOptions : aspectOptions;
+}
 
 export default function ModelsPage() {
     const { message } = App.useApp();
@@ -108,7 +130,7 @@ export default function ModelsPage() {
         setEditingModel(model);
         setIsModalOpen(true);
         if (model) {
-            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : ["auto", "1:1"], referenceLimit: model.referenceLimit || 4, isDefault: Boolean(model.isDefault) });
+            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, isDefault: Boolean(model.isDefault) });
         } else {
             form.resetFields();
             form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, isDefault: false });
@@ -239,13 +261,13 @@ export default function ModelsPage() {
                                 title: "参考图",
                                 dataIndex: "referenceLimit",
                                 width: 90,
-                                render: (value: number | undefined, record) => (record.type === "image" ? `${value || 4} 张` : "-"),
+                                render: (value: number | undefined, record) => (isVisualGenerationType(record.type) ? `${value || 4} 张` : "-"),
                             },
                             {
                                 title: "支持比例",
                                 dataIndex: "supportedSizes",
                                 width: 180,
-                                render: (value: string[] | undefined, record) => (record.type === "image" ? <Typography.Text type="secondary">{(value?.length ? value : ["auto"]).join("、")}</Typography.Text> : "-"),
+                                render: (value: string[] | undefined, record) => (isVisualGenerationType(record.type) ? <Typography.Text type="secondary">{(value?.length ? value : defaultSupportedSizes(record.type)).join("、")}</Typography.Text> : "-"),
                             },
                             {
                                 title: "状态",
@@ -345,6 +367,16 @@ export default function ModelsPage() {
                             <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
                                 <Input placeholder={currentType === "prompt" ? "例如：gpt-5.5" : "例如：video-parse"} />
                             </Form.Item>
+                            {currentType === "video" ? (
+                                <>
+                                    <Form.Item name="supportedSizes" label="支持尺寸" rules={[{ required: true, message: "请选择支持尺寸" }]} extra="用户选择该视频模型后，画布视频参数优先按这里的尺寸限制。">
+                                        <Select mode="multiple" options={supportedSizeOptions(currentType)} />
+                                    </Form.Item>
+                                    <Form.Item name="referenceLimit" label="参考图数量" rules={[{ required: true, message: "请输入参考图数量" }]} extra="用于限制图生视频、首尾帧或参考图生成时最多携带多少张参考图。">
+                                        <InputNumber min={1} max={20} precision={0} className="!w-full" placeholder="例如：4" />
+                                    </Form.Item>
+                                </>
+                            ) : null}
                             {currentType === "prompt" ? (
                                 <Form.Item
                                     name="apiKey"
@@ -403,7 +435,15 @@ function TierModelSummary({ model }: { model: AdminModel }) {
 
 function normalizeModelPayload(values: AdminModel) {
     if (values.type !== "image") {
-        return { ...values, apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "", tierModels: {}, defaultTier: "", supportedSizes: [], referenceLimit: 4, isDefault: values.type === "detail_prompt" ? Boolean(values.isDefault) : false };
+        return {
+            ...values,
+            apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "",
+            tierModels: {},
+            defaultTier: "",
+            supportedSizes: values.type === "video" ? values.supportedSizes?.length ? values.supportedSizes : defaultSupportedSizes(values.type) : [],
+            referenceLimit: values.type === "video" ? Math.max(1, Math.min(20, Math.floor(Math.abs(Number(values.referenceLimit)) || 4))) : 4,
+            isDefault: values.type === "detail_prompt" ? Boolean(values.isDefault) : false,
+        };
     }
     const tierModels: Record<string, string> = Object.fromEntries(Object.entries(values.tierModels || {}).map(([key, value]) => [key, String(value || "").trim()]).filter(([, value]) => value));
     const defaultTier = tierModels[String(values.defaultTier || "")] ? String(values.defaultTier) : firstConfiguredTier(tierModels);

@@ -99,8 +99,8 @@
 | `api_key`    | string | 后台专用密钥；目前仅提示词模型使用，不会返回给用户侧 |
 | `tier_models` | json | 图片分组各清晰度对应的实际模型 ID，例如 `512`、`1k`、`2k`、`4k` |
 | `default_tier` | string | 图片分组默认清晰度，新建画布节点或切换到该分组时优先使用 |
-| `supported_sizes` | json | 图片分组支持的画布比例，例如 `auto`、`1:1`、`16:9`、`9:16` |
-| `reference_limit` | number | 图片分组允许上传或粘贴的参考图数量 |
+| `supported_sizes` | json | 图片分组支持的画布比例，或视频模型支持的生成尺寸，例如 `auto`、`1:1`、`16:9`、`1280x720`、`3840x2160` |
+| `reference_limit` | number | 图片分组或视频模型允许上传、粘贴、携带的参考图数量 |
 | `enabled`    | bool   | 是否启用                   |
 | `remark`     | string | 备注                     |
 | `created_at` | string | 创建时间                   |

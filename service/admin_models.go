@@ -46,6 +46,11 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 		item.DefaultTier = normalizeDefaultTier(item.DefaultTier, item.TierModels)
 	} else {
 		item.DefaultTier = ""
+		item.TierModels = map[string]string{}
+	}
+	if item.Type != model.AdminModelTypeImage && item.Type != model.AdminModelTypeVideo {
+		item.SupportedSizes = []string{}
+		item.ReferenceLimit = 4
 	}
 	if item.ModelID == "" && item.Type != model.AdminModelTypeImage {
 		item.ModelID = item.Name
@@ -311,6 +316,8 @@ func normalizeSupportedSizes(values []string) []string {
 	allowed := map[string]bool{
 		"auto": true, "1:1": true, "16:9": true, "9:16": true, "4:3": true, "3:4": true,
 		"3:2": true, "2:3": true, "5:4": true, "4:5": true, "21:9": true,
+		"1280x720": true, "720x1280": true, "1024x1024": true,
+		"1920x1080": true, "1080x1920": true, "3840x2160": true, "2160x3840": true,
 	}
 	seen := map[string]bool{}
 	next := []string{}

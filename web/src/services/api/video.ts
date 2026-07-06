@@ -1,13 +1,29 @@
 import axios from "axios";
 
-import { dataUrlToFile } from "@/lib/image-utils";
-import { imageToDataUrl } from "@/services/image-storage";
+import { ensureReferenceImagesRemoteUrls, imageAiUrl } from "@/services/image-bed";
 import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string } };
+type VideoResponse = {
+    id?: string;
+    task_id?: string;
+    status?: string;
+    error?: { message?: string; code?: string };
+    metadata?: { url?: string };
+};
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
+type VideoRequestBody = {
+    model: string;
+    prompt: string;
+    size?: string;
+    duration: number;
+    seconds: string;
+    image?: string;
+    images?: string[];
+    input_reference?: string;
+    metadata?: Record<string, unknown>;
+};
 
 function aiApiUrl(config: AiConfig, path: string) {
     if (config.channelMode === "remote") return `/api/v1${path}`;
@@ -22,34 +38,68 @@ function aiHeaders(config: AiConfig) {
     return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
-
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
     const displayModel = config.model || config.videoModel;
     const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
-    const body = new FormData();
-    body.append("model", model);
-    body.append("prompt", prompt);
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
-    body.append("preset", "normal");
-    const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    files.forEach((file) => body.append("input_reference[]", file));
+    const body = await buildVideoRequestBody(config, model, prompt, references);
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
-        if (!created.id) throw new Error("视频接口没有返回任务 ID");
+        const taskId = created.id || created.task_id;
+        if (!taskId) throw new Error("视频接口没有返回任务 ID");
         for (;;) {
-            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${created.id}`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined })).data);
+            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${taskId}`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined })).data);
             if (video.status === "completed") break;
             if (video.status === "failed" || video.status === "cancelled") throw new Error(video.error?.message || "视频生成失败");
             await new Promise((resolve) => setTimeout(resolve, 2500));
         }
-        const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${created.id}/content`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined, responseType: "blob" });
+        const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${taskId}/content`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined, responseType: "blob" });
         await assertVideoBlob(content.data);
         return content.data;
     } catch (error) {
         throw new Error(readAxiosError(error, "视频生成失败"));
     }
+}
+
+async function buildVideoRequestBody(config: AiConfig, model: string, prompt: string, references: ReferenceImage[]): Promise<VideoRequestBody> {
+    const seconds = normalizeVideoSeconds(config.videoSeconds);
+    const size = normalizeVideoSizeForModel(config, model);
+    const resolution = normalizeVideoResolution(config.vquality, size);
+    const remoteReferences = await ensureReferenceImagesRemoteUrls(references.slice(0, videoReferenceLimit(config, model)));
+    const images = remoteReferences.map(imageAiUrl).filter((url): url is string => Boolean(url));
+    const body: VideoRequestBody = {
+        model,
+        prompt,
+        duration: Number(seconds),
+        seconds,
+        metadata: {
+            durationSeconds: Number(seconds),
+            resolution,
+        },
+    };
+    if (size) body.size = size;
+    applyReferenceImages(body, model, images);
+    return body;
+}
+
+function applyReferenceImages(body: VideoRequestBody, model: string, images: string[]) {
+    if (images.length === 0) return;
+    const modelName = model.toLowerCase();
+    if (modelName.includes("kling")) {
+        body.image = images[0];
+        if (images[1]) body.metadata = { ...(body.metadata || {}), image_tail: images[1] };
+        return;
+    }
+    if (modelName.includes("sora")) {
+        body.input_reference = images[0];
+        return;
+    }
+    body.images = images;
+}
+
+function videoReferenceLimit(config: AiConfig, model: string) {
+    const configured = config.modelReferenceLimits[model];
+    const normalized = Math.floor(Math.abs(Number(configured)) || 4);
+    return Math.max(1, Math.min(20, normalized));
 }
 
 function normalizeVideoSeconds(value: string) {
@@ -64,9 +114,25 @@ function normalizeVideoSize(value: string) {
     return ["9:16", "2:3", "3:4"].includes(size) ? "720x1280" : "1280x720";
 }
 
-function normalizeVideoResolution(value: string) {
+function normalizeVideoSizeForModel(config: AiConfig, model: string) {
+    const supported = (config.modelSupportedSizes[model] || []).filter(Boolean);
+    const requested = normalizeVideoSize(config.size);
+    if (!supported.length) return requested;
+    if (requested && supported.includes(requested)) return requested;
+    const fallback = supported.find((size) => size !== "auto") || "auto";
+    return normalizeVideoSize(fallback);
+}
+
+function normalizeVideoResolution(value: string, size: string | null) {
+    if (/4k/i.test(value)) return "4k";
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
+    if (size && /^(\d+)x(\d+)$/i.test(size)) {
+        const [, width, height] = size.match(/^(\d+)x(\d+)$/i) || [];
+        const maxSide = Math.max(Number(width) || 0, Number(height) || 0);
+        if (maxSide >= 3840) return "4k";
+        if (maxSide >= 1920) return "1080p";
+    }
     const resolution = value.replace(/p$/i, "") || "720";
     return `${resolution}p`;
 }
@@ -82,20 +148,21 @@ function unwrapVideoResponse(payload: ApiVideoResponse) {
 }
 
 function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number; message?: string }>(error)) {
         const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback);
+        return responseData?.msg || responseData?.error?.message || responseData?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback);
     }
     return error instanceof Error ? error.message : fallback;
 }
 
 async function assertVideoBlob(blob: Blob) {
     if (!blob.type.includes("json")) return;
-    let payload: { code?: number; msg?: string };
+    let payload: { code?: number; msg?: string; error?: { message?: string }; message?: string };
     try {
-        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string };
+        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string }; message?: string };
     } catch {
         return;
     }
     if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "视频下载失败");
+    if (payload.error?.message || payload.message) throw new Error(payload.error?.message || payload.message);
 }

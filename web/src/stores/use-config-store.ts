@@ -110,7 +110,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         const promptModels = configuredModels.filter((model) => model.type === "prompt").map((model) => model.name);
         const models = configuredModels.map((model) => model.name);
         const modelTypes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type]));
-        const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
+        const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : model.type === "video" ? ["auto", "1280x720"] : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
         const modelTierOptions = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]) : []]));
         const modelDefaultTiers = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier])) : ""]));
         const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, normalizeReferenceLimit(model.referenceLimit)]));
