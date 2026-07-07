@@ -691,9 +691,7 @@ function InfiniteCanvasPage() {
                             ...node.metadata,
                             batchChildIds: childIds,
                             primaryImageId,
-                            content: primaryNode?.metadata?.content || node.metadata.content,
-                            naturalWidth: primaryNode?.metadata?.naturalWidth || node.metadata.naturalWidth,
-                            naturalHeight: primaryNode?.metadata?.naturalHeight || node.metadata.naturalHeight,
+                            ...primaryImageMetadata(primaryNode, node),
                         },
                     };
                 });
@@ -1336,10 +1334,7 @@ function InfiniteCanvasPage() {
                                 primaryImageId: childIds.length ? nextPrimaryId : undefined,
                                 imageBatchExpanded: childIds.length ? node.metadata.imageBatchExpanded : undefined,
                                 count: childIds.length + 1,
-                                content: nextPrimaryNode?.metadata?.content || node.metadata.content,
-                                naturalWidth: nextPrimaryNode?.metadata?.naturalWidth || node.metadata.naturalWidth,
-                                naturalHeight: nextPrimaryNode?.metadata?.naturalHeight || node.metadata.naturalHeight,
-                                freeResize: nextPrimaryNode?.metadata?.freeResize ?? node.metadata.freeResize,
+                                ...primaryImageMetadata(nextPrimaryNode, node),
                             },
                         };
                     }
@@ -1582,11 +1577,8 @@ function InfiniteCanvasPage() {
                           height: child.height,
                           metadata: {
                               ...node.metadata,
-                              content: child.metadata?.content,
                               primaryImageId: child.id,
-                              naturalWidth: child.metadata?.naturalWidth,
-                              naturalHeight: child.metadata?.naturalHeight,
-                              freeResize: child.metadata?.freeResize,
+                              ...primaryImageMetadata(child, node),
                           },
                       }
                     : node,
@@ -3200,6 +3192,20 @@ function sourceNodeReferenceImages(node: CanvasNodeData | null) {
             storageKey: node.metadata.storageKey,
         },
     ];
+}
+
+function primaryImageMetadata(primaryNode: CanvasNodeData | undefined, fallbackNode: CanvasNodeData): Partial<CanvasNodeMetadata> {
+    const metadata = primaryNode?.metadata?.content ? primaryNode.metadata : fallbackNode.metadata || {};
+    return {
+        content: metadata.content,
+        storageKey: metadata.storageKey,
+        remoteUrl: metadata.remoteUrl,
+        naturalWidth: metadata.naturalWidth,
+        naturalHeight: metadata.naturalHeight,
+        bytes: metadata.bytes,
+        mimeType: metadata.mimeType,
+        freeResize: metadata.freeResize,
+    };
 }
 
 function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {
