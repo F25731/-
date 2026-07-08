@@ -29,6 +29,8 @@ export function UserBalanceBadge({ compact = false }: { compact?: boolean }) {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const keys = useMemo(readConfiguredKeys, [configVersion]);
     const keysSignature = keys.join("|");
+    const balanceAmount = Number(balance?.balanceUsd || 0);
+    const balanceClassName = balanceAmount >= 3 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
 
     useEffect(() => {
         const cached = readBalanceCache();
@@ -88,7 +90,7 @@ export function UserBalanceBadge({ compact = false }: { compact?: boolean }) {
             {isRefreshing ? <LoaderCircle className="size-3.5 animate-spin" /> : <WalletCards className="size-3.5" />}
             {balance ? (
                 <span className="max-w-44 truncate">
-                    {balance.username} · ${formatUsd(balance.balanceUsd)}
+                    {balance.username} · <span className={balanceClassName}>${formatUsd(balance.balanceUsd)}</span>
                 </span>
             ) : (
                 <span>余额</span>

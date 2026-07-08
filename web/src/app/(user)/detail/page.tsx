@@ -16,7 +16,7 @@ import { uploadReferenceImage } from "@/services/image-bed";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
-import { defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, USER_MODEL_CONFIG_KEY, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -298,9 +298,9 @@ export default function DetailWorkbenchPage() {
 
     const loadLlmKeys = () => {
         try {
-            setLlmKeys(JSON.parse(localStorage.getItem(DETAIL_LLM_KEYS_KEY) || "{}") as DetailLlmKeys);
+            setLlmKeys({ ...(JSON.parse(localStorage.getItem(DETAIL_LLM_KEYS_KEY) || "{}") as DetailLlmKeys), ...readConfiguredDetailLlmKeys() });
         } catch {
-            setLlmKeys({});
+            setLlmKeys(readConfiguredDetailLlmKeys());
         }
     };
 
@@ -1560,6 +1560,27 @@ function parseDetailLlmResponse(text: string): { code: number; data?: string; ms
             code: 1,
             msg: looksLikeHtml ? "详情图提示词接口返回了网页内容，请检查部署是否最新、反向代理是否正确转发 /api/detail-llm，或后台请求地址是否填成了网页地址。" : compact.slice(0, 160) || "详情图提示词接口返回格式异常",
         };
+    }
+}
+
+function readConfiguredDetailLlmKeys(): DetailLlmKeys {
+    if (typeof window === "undefined") return {};
+    try {
+        const config = JSON.parse(localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as {
+            mode?: "single" | "aggregate";
+            aggregate?: { apiKey?: string };
+            apiKeys?: Record<string, string>;
+            models?: AdminModel[];
+        };
+        const detailModels = (config.models || []).filter((model) => model.type === "detail_prompt");
+        if (config.mode === "aggregate") {
+            const key = String(config.aggregate?.apiKey || "").trim();
+            return key ? Object.fromEntries(detailModels.map((model) => [model.id, key])) : {};
+        }
+        const apiKeys = config.apiKeys || {};
+        return Object.fromEntries(detailModels.map((model) => [model.id, String(apiKeys[model.id] || "").trim()]).filter(([, value]) => value));
+    } catch {
+        return {};
     }
 }
 

@@ -484,7 +484,7 @@ export function normalizeModelApiUrl(value: string) {
 }
 
 function normalizeStoredUserModels(models: StoredUserModel[]) {
-    return models.filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl);
+    return models.filter((model) => model.type !== "prompt" && model.enabled && model.name && model.apiUrl);
 }
 
 function readStoredUserModelConfig() {

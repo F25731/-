@@ -11,6 +11,8 @@ import { detectAggregateModels, fetchPublicModels, type AdminModel } from "@/ser
 import { normalizeModelApiUrl, USER_MODEL_CONFIG_KEY, useConfigStore, type StoredAggregateModelConfig, type UserModelConfigMode } from "@/stores/use-config-store";
 import type { ImageKeyTier } from "@/types/api-keys";
 
+const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
+
 const modelTypeLabels: Record<AdminModel["type"], string> = {
     image: "图片分组",
     video: "视频模型",
@@ -67,7 +69,7 @@ export function AppConfigModal() {
     const loadModels = async () => {
         try {
             const data = await fetchPublicModels();
-            setModels(data.filter((model) => model.enabled && model.type !== "prompt" && model.type !== "detail_prompt"));
+            setModels(data.filter((model) => model.enabled && model.type !== "prompt"));
         } catch {
             message.error("加载模型列表失败");
         }
@@ -93,13 +95,14 @@ export function AppConfigModal() {
     };
 
     const saveConfig = async () => {
-        const cleanedApiKeys = Object.fromEntries(Object.entries(apiKeys).map(([id, value]) => [id, value.trim()]).filter(([, value]) => value));
+        let cleanedApiKeys = Object.fromEntries(Object.entries(apiKeys).map(([id, value]) => [id, value.trim()]).filter(([, value]) => value));
         let cleanedAggregate = normalizeAggregate(aggregate);
         if (mode === "aggregate" && cleanedAggregate.apiKey && !aggregateCatalogModelCount(cleanedAggregate.catalogs || {})) {
             const detected = await checkAggregateModels(cleanedAggregate);
             if (!detected) return;
             cleanedAggregate = detected;
         }
+        if (mode === "aggregate") cleanedApiKeys = aggregateFilledApiKeys(models, cleanedAggregate.catalogs || {}, cleanedAggregate.apiKey, cleanedApiKeys);
         const configuredModels = mode === "aggregate" ? aggregateConfiguredModels(models, cleanedAggregate.catalogs || {}) : models.filter((model) => cleanedApiKeys[model.id]);
         const matchedAggregateCatalogs = mode === "aggregate" ? cleanedAggregate.catalogs || {} : {};
 
@@ -128,6 +131,7 @@ export function AppConfigModal() {
             updateConfig("promptModel", promptModel?.name || "");
             updateConfig("baseUrl", imageModel?.apiUrl || "");
             updateConfig("apiKey", mode === "aggregate" ? cleanedAggregate.apiKey || "" : imageModel ? cleanedApiKeys[imageModel.id] || "" : "");
+            syncDetailLlmKeys(configuredModels, cleanedApiKeys);
             window.dispatchEvent(new Event("user-model-config-updated"));
 
             message.success(configuredModels.length ? "配置已保存" : "配置已清空");
@@ -153,6 +157,7 @@ export function AppConfigModal() {
             const next = { ...target, catalogs: normalizeCatalogs(catalogs), checkedAt: Date.now() };
             setAggregate(next);
             const matched = aggregateConfiguredModels(models, next.catalogs || {});
+            setApiKeys((current) => aggregateFilledApiKeys(models, next.catalogs || {}, target.apiKey, current));
             message.success(`检测到 ${aggregateCatalogModelCount(next.catalogs || {})} 个可调用模型，已匹配 ${matched.length} 个后台模型`);
             return next;
         } catch (error) {
@@ -257,7 +262,7 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
     const hasChecked = aggregateCatalogModelCount(catalogs) > 0;
     const matched = aggregateConfiguredModels(models, catalogs);
     const matchedIds = new Set(matched.map((model) => model.id));
-    const visibleModels = hasChecked ? matched : models;
+    const visibleModels = hasChecked ? matched : [];
     return (
         <div className="space-y-3">
             <div className="rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
@@ -265,10 +270,10 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                     <Input.Password prefix={<KeyRound className="size-4 text-stone-400" />} value={aggregate.apiKey || ""} onChange={(event) => onChange({ ...aggregate, apiKey: event.target.value, catalogs: {} })} placeholder="sk-..." />
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <Typography.Text type="secondary" className="text-xs">
-                            {aggregateCatalogModelCount(catalogs) ? `已检测到 ${aggregateCatalogModelCount(catalogs)} 个模型` : "请求地址来自后台模型配置，检测后按模型 ID 自动匹配"}
+                            {aggregateCatalogModelCount(catalogs) ? `已检测到 ${aggregateCatalogModelCount(catalogs)} 个模型` : "填入聚合 API Key 后点击获取模型，匹配成功的后台模型才会显示"}
                         </Typography.Text>
                         <Button loading={isChecking} onClick={onCheck}>
-                            检测模型
+                            获取模型
                         </Button>
                     </div>
                 </div>
@@ -302,7 +307,7 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                     })}
                 </div>
             ) : (
-                <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">{hasChecked ? "没有匹配到可用模型" : "后台还没有启用的模型分组"}</div>
+                hasChecked ? <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">没有匹配到可用模型</div> : null
             )}
         </div>
     );
@@ -356,6 +361,27 @@ function normalizeAggregate(value: StoredAggregateModelConfig) {
 
 function aggregateConfiguredModels(models: AdminModel[], catalogs: Record<string, string[]>) {
     return models.filter((model) => aggregateMatchSummary(model, catalogs).length > 0);
+}
+
+function aggregateFilledApiKeys(models: AdminModel[], catalogs: Record<string, string[]>, apiKey: string, current: Record<string, string>) {
+    const key = apiKey.trim();
+    if (!key) return current;
+    const matched = aggregateConfiguredModels(models, catalogs);
+    return {
+        ...current,
+        ...Object.fromEntries(matched.map((model) => [model.id, key])),
+    };
+}
+
+function syncDetailLlmKeys(models: AdminModel[], apiKeys: Record<string, string>) {
+    const detailKeys = Object.fromEntries(models.filter((model) => model.type === "detail_prompt").map((model) => [model.id, apiKeys[model.id] || ""]).filter(([, value]) => value));
+    if (!Object.keys(detailKeys).length) return;
+    try {
+        const saved = JSON.parse(localStorage.getItem(DETAIL_LLM_KEYS_KEY) || "{}") as Record<string, string>;
+        localStorage.setItem(DETAIL_LLM_KEYS_KEY, JSON.stringify({ ...saved, ...detailKeys }));
+    } catch {
+        localStorage.setItem(DETAIL_LLM_KEYS_KEY, JSON.stringify(detailKeys));
+    }
 }
 
 function aggregateMatchSummary(model: AdminModel, catalogs: Record<string, string[]>) {
