@@ -71,7 +71,6 @@ export default function VideoPage() {
             );
             if (cancelled) return;
             setHistory(items);
-            if (items[0]?.url) setResultUrl(items[0].url);
         })();
         return () => {
             cancelled = true;
@@ -186,7 +185,7 @@ export default function VideoPage() {
             if (item) void deleteStoredMedia([item.storageKey]);
             const next = current.filter((entry) => entry.id !== id);
             writeVideoHistory(next);
-            if (item?.url === resultUrl) setResultUrl(next[0]?.url || "");
+            if (item?.url === resultUrl) setResultUrl("");
             return next;
         });
     };
@@ -255,14 +254,14 @@ export default function VideoPage() {
                         </Space>
                     </Card>
 
-                    <section className="relative flex min-h-[640px] items-center justify-center rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
+                    <section className="relative flex min-h-[640px] items-center justify-center overflow-hidden rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
                         {resultUrl ? (
-                            <>
-                                <video src={resultUrl} controls className="max-h-[720px] max-w-full rounded-lg bg-black shadow-lg" />
-                                <Button type="primary" icon={<DownloadOutlined />} className="absolute bottom-4 right-4" onClick={() => handleDownload()}>
+                            <div className="relative flex h-[560px] max-h-[calc(100vh-240px)] min-h-[360px] w-full items-center justify-center overflow-hidden rounded-lg bg-black/90">
+                                <video src={resultUrl} controls className="h-full w-full object-contain" />
+                                <Button type="primary" icon={<DownloadOutlined />} className="absolute bottom-4 right-4 z-10" onClick={() => handleDownload()}>
                                     下载视频
                                 </Button>
-                            </>
+                            </div>
                         ) : (
                             <Empty image={<Video className="mx-auto size-16 text-stone-300 dark:text-stone-700" />} description="生成结果会显示在这里" />
                         )}
