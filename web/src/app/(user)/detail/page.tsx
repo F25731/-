@@ -456,6 +456,23 @@ export default function DetailWorkbenchPage() {
         return { success, failed: 0 };
     };
 
+    const generatePreciseRange = async (startIndex: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
+        let nextScreens = [...sourceScreens];
+        let success = 0;
+        for (const screen of sourcePlan.screens.filter((item) => item.index >= startIndex)) {
+            setCurrentIndex(screen.index);
+            setStatusText(`精细模式：正在生成第 ${screen.index} 屏`);
+            try {
+                const generated = await generateScreen(screen.index, nextScreens, sourcePlan);
+                nextScreens = patchScreen(nextScreens, screen.index, generated);
+                success += 1;
+            } catch {
+                return { success, failed: 1, stoppedAt: screen.index };
+            }
+        }
+        return { success, failed: 0 };
+    };
+
     const generateRoughPlan = async (sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
         let sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
         let success = 0;
@@ -589,7 +606,13 @@ export default function DetailWorkbenchPage() {
         setIsRunning(true);
         setStatusText(`正在重新生成第 ${currentScreen.index} 屏`);
         try {
-            await generateScreen(currentScreen.index, screens, plan);
+            if (currentScreen.status === "failed") {
+                const result = await generatePreciseRange(currentScreen.index, screens, plan);
+                if (result.failed) message.warning(`生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续`);
+                else message.success(`已从第 ${currentScreen.index} 屏继续生成后续屏幕`);
+            } else {
+                await generateScreen(currentScreen.index, screens, plan);
+            }
         } catch (error) {
             message.error(error instanceof Error ? error.message : "重新生成失败");
         } finally {
@@ -774,9 +797,11 @@ export default function DetailWorkbenchPage() {
         if (!plan || isRunning) return;
         setCurrentIndex(index);
         setIsRunning(true);
-        setStatusText(`正在重新生成第 ${index} 屏`);
+        setStatusText(`正在从第 ${index} 屏继续生成`);
         try {
-            await generateScreen(index, screens, plan, { throwOnError: false });
+            const result = await generatePreciseRange(index, screens, plan);
+            if (result.failed) message.warning(`生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续`);
+            else message.success(`已从第 ${index} 屏继续生成后续屏幕`);
         } finally {
             setIsRunning(false);
             setStatusText("");
