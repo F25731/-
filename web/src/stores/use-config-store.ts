@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { apiGet, apiPost } from "@/services/api/request";
+import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 import { DEFAULT_IMAGE_ASPECT_VALUES, IMAGE_MODEL_TIERS, type ImageModelTier } from "@/constant/image-model-options";
 import { normalizeVideoCapabilities, type VideoModelCapabilities } from "@/constant/video-model-options";
@@ -258,13 +258,7 @@ export function readUserModelConfig() {
         const sourceModels = normalizeStoredUserModels(parsed.models || []).filter((model) => !selectedIds.size || selectedIds.has(model.id));
         const apiKeys = parsed.apiKeys || {};
         const aggregate = normalizeAggregateConfig(parsed.aggregate);
-        const models =
-            mode === "aggregate"
-                ? sourceModels.flatMap((model) => {
-                      const next = filterAggregateModel(model, aggregate.catalogs || {});
-                      return next ? [next] : [];
-                  })
-                : sourceModels.filter((model) => Boolean(apiKeys[model.id]?.trim()));
+        const models = mode === "aggregate" ? (aggregate.apiKey ? sourceModels : []) : sourceModels.filter((model) => Boolean(apiKeys[model.id]?.trim()));
         return { mode, models, apiKeys, aggregate };
     } catch {
         return { mode: "single" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
@@ -317,17 +311,6 @@ export const useConfigStore = create<ConfigStore>()(
                 const models = normalizeStoredUserModels(await apiGet<StoredUserModel[]>("/api/models"));
                 const parsed = readStoredUserModelConfig();
                 const aggregate = normalizeAggregateConfig(parsed.aggregate);
-                if (parsed.mode === "aggregate" && aggregate.apiKey) {
-                    const baseUrls = Array.from(new Set(models.map((model) => normalizeModelApiUrl(model.apiUrl)).filter(Boolean)));
-                    if (baseUrls.length) {
-                        try {
-                            aggregate.catalogs = normalizeAggregateConfig({ catalogs: await apiPost<Record<string, string[]>>("/api/aggregate-models", { baseUrls, apiKey: aggregate.apiKey }) }).catalogs;
-                            aggregate.checkedAt = Date.now();
-                        } catch {
-                            // 保留上次检测结果，避免临时网络错误清空可用模型。
-                        }
-                    }
-                }
                 window.localStorage.setItem(
                     USER_MODEL_CONFIG_KEY,
                     JSON.stringify({
@@ -452,31 +435,11 @@ export function imageReferenceLimit(config: AiConfig, modelName = config.model |
 }
 
 function normalizeAggregateConfig(value?: StoredAggregateModelConfig): StoredAggregateModelConfig {
-    const catalogs = Object.fromEntries(
-        Object.entries(value?.catalogs || {})
-            .map(([baseUrl, modelIds]) => [
-                normalizeModelApiUrl(baseUrl),
-                Array.from(new Set((modelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
-            ])
-            .filter(([baseUrl, modelIds]) => Boolean(baseUrl) && modelIds.length > 0),
-    );
     return {
         apiKey: String(value?.apiKey || "").trim(),
-        catalogs,
-        checkedAt: value?.checkedAt,
+        catalogs: {},
+        checkedAt: undefined,
     };
-}
-
-function filterAggregateModel(model: StoredUserModel, catalogs: Record<string, string[]>) {
-    const available = new Set((catalogs[normalizeModelApiUrl(model.apiUrl)] || []).map((item) => item.trim()).filter(Boolean));
-    if (!available.size) return null;
-    if (model.type === "image") {
-        const tierModels = Object.fromEntries(Object.entries(model.tierModels || {}).filter(([, modelId]) => available.has(String(modelId || "").trim())));
-        if (!Object.keys(tierModels).length) return null;
-        return { ...model, tierModels, defaultTier: normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => tierModels[tier])) };
-    }
-    const modelId = (model.modelId || model.name).trim();
-    return modelId && available.has(modelId) ? model : null;
 }
 
 export function normalizeModelApiUrl(value: string) {

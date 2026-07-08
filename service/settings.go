@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 )
@@ -57,24 +56,6 @@ func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error
 		return nil, err
 	}
 	return fetchAdminChannelModels(resolved)
-}
-
-func AdminPoolModels(apiURL string, apiKey string) ([]string, error) {
-	channel := normalizeModelChannel(model.ModelChannel{
-		Protocol: "openai",
-		Name:     "模型检测",
-		BaseURL:  strings.TrimSpace(apiURL),
-		APIKey:   strings.TrimSpace(apiKey),
-		Weight:   1,
-		Enabled:  true,
-	})
-	if strings.TrimSpace(channel.BaseURL) == "" {
-		channel.BaseURL = config.Cfg.PoolAPIBaseURL
-	}
-	if strings.TrimSpace(channel.APIKey) == "" {
-		return nil, safeMessageError{message: "缺少 API Key"}
-	}
-	return fetchAdminChannelModels(channel)
 }
 
 func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName string) (string, error) {

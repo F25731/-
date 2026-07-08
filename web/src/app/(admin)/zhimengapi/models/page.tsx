@@ -1,12 +1,12 @@
 "use client";
 
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from "@ant-design/icons";
-import { App, AutoComplete, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
 import { DEFAULT_VIDEO_CAPABILITIES, VIDEO_DURATION_OPTIONS, VIDEO_QUALITY_OPTIONS, VIDEO_RATIO_OPTIONS, normalizeVideoCapabilities } from "@/constant/video-model-options";
-import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, fetchTokenModels, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
+import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
 import { DEFAULT_POOL_API_BASE_URL } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -50,9 +50,6 @@ export default function ModelsPage() {
     const [settings, setSettings] = useState<AdminSettings | null>(null);
     const [isSettingsLoading, setIsSettingsLoading] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [modelFetchKey, setModelFetchKey] = useState("");
-    const [fetchedModelIds, setFetchedModelIds] = useState<string[]>([]);
-    const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [form] = Form.useForm<AdminModel>();
     const [imageBedForm] = Form.useForm<ImageBedFormValues>();
     const [balanceForm] = Form.useForm<BalanceFormValues>();
@@ -127,8 +124,6 @@ export default function ModelsPage() {
     const openModal = (model: AdminModel | null) => {
         setEditingModel(model);
         setIsModalOpen(true);
-        setModelFetchKey("");
-        setFetchedModelIds([]);
         if (model) {
             const videoCapabilities = normalizeVideoCapabilities(model.videoCapabilities || { ratios: model.supportedSizes, referenceImageLimit: model.referenceLimit });
             form.setFieldsValue({ ...model, apiUrl: model.apiUrl || FIXED_MODEL_API_URL, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, videoCapabilities, isDefault: Boolean(model.isDefault) });
@@ -168,28 +163,7 @@ export default function ModelsPage() {
     const closeModal = () => {
         setIsModalOpen(false);
         setEditingModel(null);
-        setModelFetchKey("");
-        setFetchedModelIds([]);
         form.resetFields();
-    };
-
-    const loadUpstreamModels = async () => {
-        const key = modelFetchKey.trim();
-        const apiUrl = String(form.getFieldValue("apiUrl") || "").trim();
-        if (!key) {
-            message.warning("请先填写用于获取模型的 API Key");
-            return;
-        }
-        setIsFetchingModels(true);
-        try {
-            const ids = Array.from(new Set((await fetchTokenModels(token!, apiUrl, key)).map((item) => item.trim()).filter(Boolean)));
-            setFetchedModelIds(ids);
-            message.success(`获取到 ${ids.length} 个模型`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "获取模型失败");
-        } finally {
-            setIsFetchingModels(false);
-        }
     };
 
     const saveModel = async () => {
@@ -416,18 +390,6 @@ export default function ModelsPage() {
                     <Form.Item name="apiUrl" label="模型请求地址" rules={[{ required: true, message: "请输入模型请求地址" }]} extra="后台配置模型请求地址，用户侧只填写 API Key。">
                         <Input placeholder="https://api.example.com/v1" />
                     </Form.Item>
-                    <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40">
-                        <Typography.Text className="mb-2 block text-sm font-medium">获取模型</Typography.Text>
-                        <Space.Compact block>
-                            <Input.Password value={modelFetchKey} onChange={(event) => setModelFetchKey(event.target.value)} placeholder="填写任意可用 API Key 后获取模型列表" />
-                            <Button loading={isFetchingModels} onClick={loadUpstreamModels}>
-                                获取模型
-                            </Button>
-                        </Space.Compact>
-                        <Typography.Text type="secondary" className="mt-2 block text-xs">
-                            获取后下方只从真实模型列表里选择；模型请求地址统一使用固定接口，不需要单独填写。
-                        </Typography.Text>
-                    </div>
 
                     {currentType === "image" ? (
                         <>
@@ -435,7 +397,7 @@ export default function ModelsPage() {
                             <div className="mb-4 grid grid-cols-2 gap-3">
                                 {IMAGE_MODEL_TIERS.map((tier) => (
                                     <Form.Item key={tier} name={["tierModels", tier]} label={IMAGE_MODEL_TIER_LABELS[tier]} className="!mb-0">
-                                        <ModelIdSelect modelIds={fetchedModelIds} placeholder={`选择或输入 ${IMAGE_MODEL_TIER_LABELS[tier]} 模型`} />
+                                        <Input placeholder={`输入 ${IMAGE_MODEL_TIER_LABELS[tier]} 模型名`} />
                                     </Form.Item>
                                 ))}
                             </div>
@@ -461,7 +423,7 @@ export default function ModelsPage() {
                     ) : (
                         <>
                             <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
-                                <ModelIdSelect modelIds={fetchedModelIds} placeholder="选择或输入模型 ID" />
+                                <Input placeholder="输入模型 ID" />
                             </Form.Item>
                             {currentType === "video" ? (
                                 <>
@@ -572,10 +534,6 @@ function VideoCapabilitySummary({ model }: { model: AdminModel }) {
             <Tag>{capabilities.durations.map((value) => `${value}s`).join("/")}</Tag>
         </Space>
     );
-}
-
-function ModelIdSelect({ modelIds, placeholder }: { modelIds: string[]; placeholder: string }) {
-    return <AutoComplete allowClear options={modelIds.map((id) => ({ label: id, value: id }))} placeholder={placeholder} filterOption={(input, option) => String(option?.value || "").toLowerCase().includes(input.toLowerCase())} />;
 }
 
 function normalizeModelPayload(values: AdminModel) {

@@ -73,7 +73,6 @@ func New() *gin.Engine {
 		handler.AdminDeleteAsset(c.Writer, c.Request, c.Param("id"))
 	})
 	admin.GET("/models", gin.WrapF(handler.AdminModels))
-	admin.POST("/models/fetch", gin.WrapF(handler.AdminFetchModels))
 	admin.POST("/models", func(c *gin.Context) {
 		handler.AdminSaveModel(c.Writer, c.Request, "")
 	})
