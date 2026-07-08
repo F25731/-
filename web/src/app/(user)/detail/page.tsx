@@ -516,7 +516,7 @@ export default function DetailWorkbenchPage() {
         setStatusText("正在读取参考图风格");
         const results = await Promise.allSettled(
             references.slice(0, 6).map(async (reference, index) => {
-                const text = await requestPromptExtraction(reference);
+                const text = await requestPromptExtraction(reference, effectiveConfig);
                 return `${index + 1}. ${text.trim()}`;
             }),
         );

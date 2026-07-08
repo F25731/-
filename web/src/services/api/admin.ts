@@ -294,6 +294,6 @@ export async function detectAggregateModels(baseUrls: string[], apiKey: string) 
     return apiPost<Record<string, string[]>>("/api/aggregate-models", { baseUrls, apiKey });
 }
 
-export async function fetchTokenModels(token: string, apiKey: string) {
-    return apiPost<string[]>("/api/admin/models/fetch", { apiKey }, token);
+export async function fetchTokenModels(token: string, apiUrl: string, apiKey: string) {
+    return apiPost<string[]>("/api/admin/models/fetch", { apiUrl, apiKey }, token);
 }

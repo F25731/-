@@ -19,6 +19,7 @@ type VideoCapabilities struct {
 	DefaultQuality           string   `json:"defaultQuality"`
 	DefaultDuration          int      `json:"defaultDuration"`
 	ReferenceImageLimit      int      `json:"referenceImageLimit"`
+	RequireImageReference    bool     `json:"requireImageReference"`
 	ReferenceVideoLimit      int      `json:"referenceVideoLimit"`
 	ReferenceVideoMaxSeconds int      `json:"referenceVideoMaxSeconds"`
 	ReferenceAudioLimit      int      `json:"referenceAudioLimit"`

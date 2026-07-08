@@ -175,13 +175,14 @@ export default function ModelsPage() {
 
     const loadUpstreamModels = async () => {
         const key = modelFetchKey.trim();
+        const apiUrl = String(form.getFieldValue("apiUrl") || "").trim();
         if (!key) {
             message.warning("请先填写用于获取模型的 API Key");
             return;
         }
         setIsFetchingModels(true);
         try {
-            const ids = Array.from(new Set((await fetchTokenModels(token!, key)).map((item) => item.trim()).filter(Boolean)));
+            const ids = Array.from(new Set((await fetchTokenModels(token!, apiUrl, key)).map((item) => item.trim()).filter(Boolean)));
             setFetchedModelIds(ids);
             message.success(`获取到 ${ids.length} 个模型`);
         } catch (error) {
@@ -412,6 +413,9 @@ export default function ModelsPage() {
                     <Form.Item name="name" label={currentType === "image" ? "分组名称" : "显示名称"} rules={[{ required: true, message: "请输入名称" }]} extra={currentType === "image" ? "例如：ChatGPT、即梦、豆包。用户侧会按这个名称选择分组。" : "前端展示给用户看的名称。"}>
                         <Input placeholder={currentType === "image" ? "例如：ChatGPT" : "例如：视频解析"} />
                     </Form.Item>
+                    <Form.Item name="apiUrl" label="模型请求地址" rules={[{ required: true, message: "请输入模型请求地址" }]} extra="后台配置模型请求地址，用户侧只填写 API Key。">
+                        <Input placeholder="https://api.example.com/v1" />
+                    </Form.Item>
                     <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40">
                         <Typography.Text className="mb-2 block text-sm font-medium">获取模型</Typography.Text>
                         <Space.Compact block>
@@ -502,17 +506,15 @@ export default function ModelsPage() {
                                     <Form.Item name={["videoCapabilities", "referenceVideoMaxSeconds"]} label="参考视频总时长上限" extra="单位：秒，用于提示用户和限制上传/填写。">
                                         <InputNumber min={1} max={300} precision={0} className="!w-full" />
                                     </Form.Item>
+                                    <Form.Item name={["videoCapabilities", "requireImageReference"]} label="是否必须参考图" extra="开启后，用户生成视频时必须至少添加 1 张参考图。">
+                                        <Select
+                                            options={[
+                                                { label: "必须添加", value: true },
+                                                { label: "不强制", value: false },
+                                            ]}
+                                        />
+                                    </Form.Item>
                                 </>
-                            ) : null}
-                            {currentType === "prompt" ? (
-                                <Form.Item
-                                    name="apiKey"
-                                    label="后台专用 API Key"
-                                    rules={editingModel?.hasApiKey ? [] : [{ required: true, message: "请输入后台专用 API Key" }]}
-                                    extra={editingModel?.hasApiKey ? "已保存密钥；留空表示继续使用原密钥。这个模型只用于图片提取提示词。" : "必填。这个模型只用于图片提取提示词。"}
-                                >
-                                    <Input.Password placeholder={editingModel?.hasApiKey ? "留空表示不修改" : "sk-..."} />
-                                </Form.Item>
                             ) : null}
                             {currentType === "detail_prompt" ? (
                                 <Form.Item name="isDefault" label="设为默认详情图提示词模型" extra="前台详情图工作台会默认选中这个模型；同一时间只会保留一个默认。">
@@ -581,7 +583,7 @@ function normalizeModelPayload(values: AdminModel) {
         const videoCapabilities = values.type === "video" ? normalizeVideoCapabilities(values.videoCapabilities) : undefined;
         return {
             ...values,
-            apiKey: values.type === "prompt" ? String(values.apiKey || "").trim() : "",
+            apiKey: "",
             tierModels: {},
             defaultTier: "",
             supportedSizes: values.type === "video" ? videoCapabilities?.ratios || defaultSupportedSizes(values.type) : [],

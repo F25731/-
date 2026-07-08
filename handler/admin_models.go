@@ -19,10 +19,12 @@ func Models(w http.ResponseWriter, r *http.Request) {
 
 func PromptExtract(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Image string `json:"image"`
+		Image  string `json:"image"`
+		Model  string `json:"model"`
+		APIKey string `json:"apiKey"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&payload)
-	result, err := service.ExtractPromptFromImage(payload.Image)
+	result, err := service.ExtractPromptFromImage(payload.Image, payload.Model, payload.APIKey)
 	if err != nil {
 		FailError(w, err)
 		return
@@ -56,10 +58,11 @@ func AdminModels(w http.ResponseWriter, r *http.Request) {
 
 func AdminFetchModels(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
+		APIURL string `json:"apiUrl"`
 		APIKey string `json:"apiKey"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&payload)
-	result, err := service.AdminPoolModels(payload.APIKey)
+	result, err := service.AdminPoolModels(payload.APIURL, payload.APIKey)
 	if err != nil {
 		FailError(w, err)
 		return

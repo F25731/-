@@ -59,15 +59,18 @@ func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error
 	return fetchAdminChannelModels(resolved)
 }
 
-func AdminPoolModels(apiKey string) ([]string, error) {
+func AdminPoolModels(apiURL string, apiKey string) ([]string, error) {
 	channel := normalizeModelChannel(model.ModelChannel{
 		Protocol: "openai",
 		Name:     "模型检测",
-		BaseURL:  config.Cfg.PoolAPIBaseURL,
+		BaseURL:  strings.TrimSpace(apiURL),
 		APIKey:   strings.TrimSpace(apiKey),
 		Weight:   1,
 		Enabled:  true,
 	})
+	if strings.TrimSpace(channel.BaseURL) == "" {
+		channel.BaseURL = config.Cfg.PoolAPIBaseURL
+	}
 	if strings.TrimSpace(channel.APIKey) == "" {
 		return nil, safeMessageError{message: "缺少 API Key"}
 	}

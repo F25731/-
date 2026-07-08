@@ -63,12 +63,7 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	if item.ModelID == "" && item.Type != model.AdminModelTypeImage {
 		item.ModelID = item.Name
 	}
-	if item.Type == model.AdminModelTypePrompt && item.APIKey == "" && item.ID == "" {
-		return model.AdminModel{}, safeMessageError{message: "提示词提取模型需要配置后台 API Key"}
-	}
-	if item.Type != model.AdminModelTypePrompt {
-		item.APIKey = ""
-	}
+	item.APIKey = ""
 	if item.Type != model.AdminModelTypeDetailPrompt || !item.Enabled {
 		item.IsDefault = false
 	}
@@ -89,14 +84,18 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	return safeAdminModel(saved), nil
 }
 
-func ExtractPromptFromImage(image string) (string, error) {
+func ExtractPromptFromImage(image string, promptModelID string, apiKey string) (string, error) {
 	image = strings.TrimSpace(image)
+	apiKey = strings.TrimSpace(apiKey)
 	if image == "" {
 		return "", safeMessageError{message: "请先上传图片"}
 	}
-	promptModel, err := selectPromptModel()
+	promptModel, err := selectPromptModel(promptModelID)
 	if err != nil {
 		return "", err
+	}
+	if apiKey == "" {
+		return "", safeMessageError{message: "请先填写提示词模型 API Key"}
 	}
 	modelID := strings.TrimSpace(promptModel.ModelID)
 	if modelID == "" {
@@ -112,12 +111,12 @@ func ExtractPromptFromImage(image string) (string, error) {
 			},
 		}},
 	})
-	channel := model.ModelChannel{BaseURL: promptModel.APIURL, APIKey: promptModel.APIKey}
+	channel := model.ModelChannel{BaseURL: promptModel.APIURL, APIKey: apiKey}
 	request, err := http.NewRequest(http.MethodPost, BuildModelChannelURL(channel, "/chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("Authorization", "Bearer "+promptModel.APIKey)
+	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	client := http.Client{Timeout: 90 * time.Second}
 	response, err := client.Do(request)
@@ -200,15 +199,26 @@ func RequestDetailPrompt(modelID string, apiKey string, messages []any) (string,
 	return "", safeMessageError{message: "详情图提示词接口没有返回内容"}
 }
 
-func selectPromptModel() (model.AdminModel, error) {
+func selectPromptModel(id string) (model.AdminModel, error) {
+	id = strings.TrimSpace(id)
 	items, _, err := repository.ListAdminModels(true)
 	if err != nil {
 		return model.AdminModel{}, err
 	}
+	var first model.AdminModel
 	for _, item := range items {
-		if item.Type == model.AdminModelTypePrompt && strings.TrimSpace(item.APIURL) != "" && strings.TrimSpace(item.APIKey) != "" {
+		if item.Type != model.AdminModelTypePrompt || strings.TrimSpace(item.APIURL) == "" {
+			continue
+		}
+		if first.ID == "" {
+			first = item
+		}
+		if id != "" && (item.ID == id || item.Name == id || item.ModelID == id) {
 			return item, nil
 		}
+	}
+	if id == "" && first.ID != "" {
+		return first, nil
 	}
 	return model.AdminModel{}, safeMessageError{message: "后台还没有配置提示词模型"}
 }
@@ -259,9 +269,6 @@ func readChatCompletionContent(body []byte) string {
 func publicAdminModels(items []model.AdminModel) []model.AdminModel {
 	result := make([]model.AdminModel, 0, len(items))
 	for _, item := range items {
-		if item.Type == model.AdminModelTypePrompt {
-			continue
-		}
 		if item.Type == model.AdminModelTypeVideo {
 			item.VideoCapabilities = normalizeVideoCapabilities(item.VideoCapabilities, item.SupportedSizes, item.ReferenceLimit)
 			item.SupportedSizes = item.VideoCapabilities.Ratios
@@ -386,6 +393,7 @@ func normalizeVideoCapabilities(value model.VideoCapabilities, legacySizes []str
 		DefaultQuality:           defaultQuality,
 		DefaultDuration:          defaultDuration,
 		ReferenceImageLimit:      referenceImageLimit,
+		RequireImageReference:    value.RequireImageReference && referenceImageLimit > 0,
 		ReferenceVideoLimit:      referenceVideoLimit,
 		ReferenceVideoMaxSeconds: referenceVideoMaxSeconds,
 		ReferenceAudioLimit:      referenceAudioLimit,
@@ -466,6 +474,7 @@ func isEmptyVideoCapabilities(value model.VideoCapabilities) bool {
 		strings.TrimSpace(value.DefaultQuality) == "" &&
 		value.DefaultDuration == 0 &&
 		value.ReferenceImageLimit == 0 &&
+		!value.RequireImageReference &&
 		value.ReferenceVideoLimit == 0 &&
 		value.ReferenceVideoMaxSeconds == 0 &&
 		value.ReferenceAudioLimit == 0 &&

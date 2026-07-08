@@ -41,21 +41,25 @@ type VideoRequestBody = {
 
 function aiApiUrl(config: AiConfig, path: string) {
     if (config.channelMode === "remote") return `/api/v1${path}`;
-    const runtime = resolveModelRuntimeConfig(config, config.model || config.videoModel);
+    const runtime = resolveModelRuntimeConfig(config, videoRuntimeModelName(config));
     return buildApiUrl(runtime.baseUrl || config.baseUrl, path);
 }
 
 function aiHeaders(config: AiConfig) {
     const token = useUserStore.getState().token;
-    const runtime = config.channelMode === "remote" ? { apiKey: config.apiKey } : resolveModelRuntimeConfig(config, config.model || config.videoModel);
+    const runtime = config.channelMode === "remote" ? { apiKey: config.apiKey } : resolveModelRuntimeConfig(config, videoRuntimeModelName(config));
     const authToken = config.channelMode === "remote" ? token : runtime.apiKey || config.apiKey || token;
     return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
+function videoRuntimeModelName(config: AiConfig) {
+    return config.videoModel || config.model;
+}
+
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mediaReferences: VideoReferenceMaterial[] = []) {
-    const displayModel = config.model || config.videoModel;
+    const displayModel = videoRuntimeModelName(config);
     const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
-    const body = await buildVideoRequestBody(config, model, prompt, references, mediaReferences);
+    const body = await buildVideoRequestBody(config, displayModel, model, prompt, references, mediaReferences);
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
         const taskId = created.id || created.task_id;
@@ -78,14 +82,15 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     }
 }
 
-async function buildVideoRequestBody(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], mediaReferences: VideoReferenceMaterial[]): Promise<VideoRequestBody> {
-    const capabilities = videoCapabilitiesForModel(config, config.videoModel || config.model);
+async function buildVideoRequestBody(config: AiConfig, displayModel: string, model: string, prompt: string, references: ReferenceImage[], mediaReferences: VideoReferenceMaterial[]): Promise<VideoRequestBody> {
+    const capabilities = videoCapabilitiesForModel(config, displayModel);
     const seconds = normalizeVideoSeconds(config.videoSeconds);
-    const size = normalizeVideoSizeForModel(config, model);
+    const size = normalizeVideoSizeForModel(config, displayModel);
     const resolution = normalizeVideoResolution(config.vquality, size);
     const imageLimit = Math.max(0, Math.floor(Number(capabilities.referenceImageLimit) || 0));
     const videoLimit = Math.max(0, Math.floor(Number(capabilities.referenceVideoLimit) || 0));
     const audioLimit = Math.max(0, Math.floor(Number(capabilities.referenceAudioLimit) || 0));
+    if (capabilities.requireImageReference && imageLimit > 0 && references.length === 0) throw new Error("当前视频模型必须添加参考图");
     const remoteReferences = imageLimit > 0 ? await ensureReferenceImagesRemoteUrls(references.slice(0, imageLimit)) : [];
     const images = remoteReferences.map(imageAiUrl).filter((url): url is string => Boolean(url));
     const videos = videoLimit > 0 ? mediaReferences.filter((item) => item.type === "video").slice(0, videoLimit).map((item) => item.url.trim()).filter(Boolean) : [];

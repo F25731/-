@@ -69,7 +69,7 @@ export function AppConfigModal() {
     const loadModels = async () => {
         try {
             const data = await fetchPublicModels();
-            setModels(data.filter((model) => model.enabled && model.type !== "prompt"));
+            setModels(data.filter((model) => model.enabled));
         } catch {
             message.error("加载模型列表失败");
         }
@@ -223,9 +223,6 @@ export function AppConfigModal() {
                                                 </Typography.Text>
                                                 <Tag color={modelTypeColors[model.type]}>{modelTypeLabels[model.type]}</Tag>
                                             </div>
-                                            <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                                {model.apiUrl}
-                                            </Typography.Text>
                                         </div>
                                         {apiKeys[model.id]?.trim() ? <Tag color="success">已填写</Tag> : <Tag>未填写</Tag>}
                                     </div>
@@ -293,9 +290,6 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                                             </Typography.Text>
                                             <Tag color={modelTypeColors[model.type]}>{modelTypeLabels[model.type]}</Tag>
                                         </div>
-                                        <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                            {model.apiUrl}
-                                        </Typography.Text>
                                     </div>
                                     <Tag color={active ? "success" : undefined}>{active ? "已匹配" : "未匹配"}</Tag>
                                 </div>

@@ -7,6 +7,7 @@ export type VideoModelCapabilities = {
     defaultQuality?: string;
     defaultDuration?: number;
     referenceImageLimit?: number;
+    requireImageReference?: boolean;
     referenceVideoLimit?: number;
     referenceVideoMaxSeconds?: number;
     referenceAudioLimit?: number;
@@ -42,6 +43,7 @@ export const DEFAULT_VIDEO_CAPABILITIES: Required<VideoModelCapabilities> = {
     defaultQuality: "720p",
     defaultDuration: 5,
     referenceImageLimit: 4,
+    requireImageReference: false,
     referenceVideoLimit: 0,
     referenceVideoMaxSeconds: 15,
     referenceAudioLimit: 0,
@@ -63,6 +65,7 @@ export function normalizeVideoCapabilities(input?: VideoModelCapabilities | null
         defaultQuality: qualities.includes(String(input?.defaultQuality || "")) ? String(input?.defaultQuality) : qualities[0],
         defaultDuration: durations.includes(Number(input?.defaultDuration)) ? Number(input?.defaultDuration) : durations[0],
         referenceImageLimit: clampInt(input?.referenceImageLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceImageLimit),
+        requireImageReference: Boolean(input?.requireImageReference && clampInt(input?.referenceImageLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceImageLimit) > 0),
         referenceVideoLimit: clampInt(input?.referenceVideoLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceVideoLimit),
         referenceVideoMaxSeconds: clampInt(input?.referenceVideoMaxSeconds, 1, 300, DEFAULT_VIDEO_CAPABILITIES.referenceVideoMaxSeconds),
         referenceAudioLimit: clampInt(input?.referenceAudioLimit, 0, 5, DEFAULT_VIDEO_CAPABILITIES.referenceAudioLimit),

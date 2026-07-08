@@ -390,11 +390,15 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
     return answer || "没有返回内容";
 }
 
-export async function requestPromptExtraction(image: ReferenceImage) {
+export async function requestPromptExtraction(image: ReferenceImage, config?: AiConfig) {
     const remoteImage = await ensureReferenceImageRemoteUrl(image);
     const imageUrl = imageAiUrl(remoteImage) || (await imageToDataUrl(image));
     if (!imageUrl) throw new Error("请先上传图片");
-    return apiPost<string>("/api/prompt/extract", { image: imageUrl });
+    const model = String(config?.promptModel || "").trim();
+    const runtime = config && model ? resolveModelRuntimeConfig(config, model) : null;
+    const apiKey = String(runtime?.apiKey || "").trim();
+    if (!model || !apiKey) throw new Error("请先在 API Key 配置里填写提示词模型密钥");
+    return apiPost<string>("/api/prompt/extract", { image: imageUrl, model, apiKey });
 }
 
 export async function fetchImageModels(config: AiConfig) {

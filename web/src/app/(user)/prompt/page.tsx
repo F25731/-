@@ -8,11 +8,13 @@ import { useState } from "react";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { requestPromptExtraction } from "@/services/api/image";
 import { uploadReferenceImage } from "@/services/image-bed";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
 export default function PromptPage() {
     const { message } = App.useApp();
     const copyText = useCopyText();
+    const config = useEffectiveConfig();
     const [image, setImage] = useState<ReferenceImage | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [isExtracting, setIsExtracting] = useState(false);
@@ -44,7 +46,7 @@ export default function PromptPage() {
         }
         setIsExtracting(true);
         try {
-            const text = await requestPromptExtraction(image);
+            const text = await requestPromptExtraction(image, config);
             setResult(text);
             message.success("提示词已提取");
         } catch (error) {

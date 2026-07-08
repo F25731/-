@@ -116,6 +116,10 @@ export default function VideoPage() {
             message.warning("请输入视频描述");
             return;
         }
+        if (capabilities.requireImageReference && imageReferences.length === 0) {
+            message.warning("当前视频模型必须添加参考图");
+            return;
+        }
         setIsGenerating(true);
         try {
             if (resultUrl) URL.revokeObjectURL(resultUrl);
