@@ -30,6 +30,7 @@ export default function VideoPage() {
     const [resultUrl, setResultUrl] = useState("");
 
     const videoModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "video"), [config.modelTypes, config.models]);
+    const hasReferenceInputs = capabilities.referenceImageLimit > 0 || capabilities.referenceVideoLimit > 0 || capabilities.referenceAudioLimit > 0;
 
     useEffect(() => {
         if (selectedModel && videoModels.includes(selectedModel)) return;
@@ -170,50 +171,54 @@ export default function VideoPage() {
                                 <Slider min={Math.min(...capabilities.durations)} max={Math.max(...capabilities.durations)} step={null} marks={Object.fromEntries(capabilities.durations.map((item) => [item, `${item}s`]))} value={duration} onChange={setDuration} />
                             </ControlBlock>
 
-                            <ControlBlock title="参考素材">
-                                <ReferenceRow
-                                    icon={<ImageIcon className="size-4" />}
-                                    title="参考图"
-                                    limit={capabilities.referenceImageLimit}
-                                    count={imageReferences.length}
-                                    value={imageUrl}
-                                    placeholder="HTTPS 图片 URL"
-                                    accept="image/*"
-                                    disabled={!capabilities.referenceImageLimit}
-                                    onValueChange={setImageUrl}
-                                    onAdd={addImageUrl}
-                                    onUpload={(file) => uploadImage(file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                />
-                                <ReferenceRow
-                                    icon={<Video className="size-4" />}
-                                    title="参考视频"
-                                    limit={capabilities.referenceVideoLimit}
-                                    count={mediaReferences.filter((item) => item.type === "video").length}
-                                    value={videoUrlInput}
-                                    placeholder="HTTPS 视频 URL"
-                                    accept="video/*"
-                                    disabled={!capabilities.referenceVideoLimit}
-                                    extra={capabilities.referenceVideoLimit ? `总时长建议不超过 ${capabilities.referenceVideoMaxSeconds}s` : "当前模型不支持"}
-                                    onValueChange={setVideoUrlInput}
-                                    onAdd={() => addMediaUrl("video", videoUrlInput, setVideoUrlInput)}
-                                    onUpload={(file) => uploadMedia("video", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                />
-                                <ReferenceRow
-                                    icon={<Music2 className="size-4" />}
-                                    title="参考音频"
-                                    limit={capabilities.referenceAudioLimit}
-                                    count={mediaReferences.filter((item) => item.type === "audio").length}
-                                    value={audioUrlInput}
-                                    placeholder="HTTPS 音频 URL"
-                                    accept="audio/*"
-                                    disabled={!capabilities.referenceAudioLimit}
-                                    extra={capabilities.referenceAudioLimit ? undefined : "当前模型不支持"}
-                                    onValueChange={setAudioUrlInput}
-                                    onAdd={() => addMediaUrl("audio", audioUrlInput, setAudioUrlInput)}
-                                    onUpload={(file) => uploadMedia("audio", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                />
-                                <MaterialTags images={imageReferences} media={mediaReferences} onRemoveImage={(id) => setImageReferences((current) => current.filter((item) => item.id !== id))} onRemoveMedia={(url) => setMediaReferences((current) => current.filter((item) => item.url !== url))} />
-                            </ControlBlock>
+                            {hasReferenceInputs ? (
+                                <ControlBlock title="参考素材">
+                                    {capabilities.referenceImageLimit > 0 ? (
+                                        <ReferenceRow
+                                            icon={<ImageIcon className="size-4" />}
+                                            title="参考图"
+                                            limit={capabilities.referenceImageLimit}
+                                            count={imageReferences.length}
+                                            value={imageUrl}
+                                            placeholder="HTTPS 图片 URL"
+                                            accept="image/*"
+                                            onValueChange={setImageUrl}
+                                            onAdd={addImageUrl}
+                                            onUpload={(file) => uploadImage(file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                        />
+                                    ) : null}
+                                    {capabilities.referenceVideoLimit > 0 ? (
+                                        <ReferenceRow
+                                            icon={<Video className="size-4" />}
+                                            title="参考视频"
+                                            limit={capabilities.referenceVideoLimit}
+                                            count={mediaReferences.filter((item) => item.type === "video").length}
+                                            value={videoUrlInput}
+                                            placeholder="HTTPS 视频 URL"
+                                            accept="video/*"
+                                            extra={`总时长建议不超过 ${capabilities.referenceVideoMaxSeconds}s`}
+                                            onValueChange={setVideoUrlInput}
+                                            onAdd={() => addMediaUrl("video", videoUrlInput, setVideoUrlInput)}
+                                            onUpload={(file) => uploadMedia("video", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                        />
+                                    ) : null}
+                                    {capabilities.referenceAudioLimit > 0 ? (
+                                        <ReferenceRow
+                                            icon={<Music2 className="size-4" />}
+                                            title="参考音频"
+                                            limit={capabilities.referenceAudioLimit}
+                                            count={mediaReferences.filter((item) => item.type === "audio").length}
+                                            value={audioUrlInput}
+                                            placeholder="HTTPS 音频 URL"
+                                            accept="audio/*"
+                                            onValueChange={setAudioUrlInput}
+                                            onAdd={() => addMediaUrl("audio", audioUrlInput, setAudioUrlInput)}
+                                            onUpload={(file) => uploadMedia("audio", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
+                                        />
+                                    ) : null}
+                                    <MaterialTags images={imageReferences} media={mediaReferences} onRemoveImage={(id) => setImageReferences((current) => current.filter((item) => item.id !== id))} onRemoveMedia={(url) => setMediaReferences((current) => current.filter((item) => item.url !== url))} />
+                                </ControlBlock>
+                            ) : null}
 
                             <ControlBlock title="视频描述">
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述镜头、主体、动作、场景、风格和声音。例如：高光泽产品舞台上，一辆白色超跑由全息零件逐步组装成型，镜头环绕揭示。" rows={7} className="resize-none" />

@@ -28,6 +28,9 @@ type VideoRequestBody = {
     model: string;
     prompt: string;
     size?: string;
+    aspect_ratio?: string;
+    resolution?: string;
+    quality?: string;
     duration: number;
     seconds: string;
     image?: string;
@@ -80,15 +83,20 @@ async function buildVideoRequestBody(config: AiConfig, model: string, prompt: st
     const seconds = normalizeVideoSeconds(config.videoSeconds);
     const size = normalizeVideoSizeForModel(config, model);
     const resolution = normalizeVideoResolution(config.vquality, size);
-    const remoteReferences = await ensureReferenceImagesRemoteUrls(references.slice(0, capabilities.referenceImageLimit || videoReferenceLimit(config, model)));
+    const imageLimit = Math.max(0, Math.floor(Number(capabilities.referenceImageLimit) || 0));
+    const videoLimit = Math.max(0, Math.floor(Number(capabilities.referenceVideoLimit) || 0));
+    const audioLimit = Math.max(0, Math.floor(Number(capabilities.referenceAudioLimit) || 0));
+    const remoteReferences = imageLimit > 0 ? await ensureReferenceImagesRemoteUrls(references.slice(0, imageLimit)) : [];
     const images = remoteReferences.map(imageAiUrl).filter((url): url is string => Boolean(url));
-    const videos = mediaReferences.filter((item) => item.type === "video").slice(0, capabilities.referenceVideoLimit).map((item) => item.url.trim()).filter(Boolean);
-    const audios = mediaReferences.filter((item) => item.type === "audio").slice(0, capabilities.referenceAudioLimit).map((item) => item.url.trim()).filter(Boolean);
+    const videos = videoLimit > 0 ? mediaReferences.filter((item) => item.type === "video").slice(0, videoLimit).map((item) => item.url.trim()).filter(Boolean) : [];
+    const audios = audioLimit > 0 ? mediaReferences.filter((item) => item.type === "audio").slice(0, audioLimit).map((item) => item.url.trim()).filter(Boolean) : [];
     const body: VideoRequestBody = {
         model,
         prompt,
         duration: Number(seconds),
         seconds,
+        resolution,
+        quality: resolution,
         metadata: {
             durationSeconds: Number(seconds),
             resolution,
@@ -96,7 +104,10 @@ async function buildVideoRequestBody(config: AiConfig, model: string, prompt: st
             aspectRatio: size,
         },
     };
-    if (size) body.size = size;
+    if (size) {
+        body.size = size;
+        body.aspect_ratio = size;
+    }
     applyReferenceImages(body, model, images);
     applyReferenceContent(body, images, videos, audios);
     return body;
@@ -125,12 +136,6 @@ function applyReferenceContent(body: VideoRequestBody, images: string[], videos:
     ];
     if (!content.length) return;
     body.metadata = { ...(body.metadata || {}), content };
-}
-
-function videoReferenceLimit(config: AiConfig, model: string) {
-    const configured = config.modelReferenceLimits[model];
-    const normalized = Math.floor(Math.abs(Number(configured)) || 4);
-    return Math.max(1, Math.min(20, normalized));
 }
 
 function normalizeVideoSeconds(value: string) {

@@ -38,12 +38,12 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	}
 	item.TierModels = normalizeTierModels(item.TierModels)
 	item.SupportedSizes = normalizeSupportedSizes(item.SupportedSizes)
-	item.ReferenceLimit = normalizeReferenceLimit(item.ReferenceLimit)
 	if item.Type == model.AdminModelTypeVideo {
 		item.VideoCapabilities = normalizeVideoCapabilities(item.VideoCapabilities, item.SupportedSizes, item.ReferenceLimit)
 		item.SupportedSizes = item.VideoCapabilities.Ratios
 		item.ReferenceLimit = item.VideoCapabilities.ReferenceImageLimit
 	} else {
+		item.ReferenceLimit = normalizeReferenceLimit(item.ReferenceLimit)
 		item.VideoCapabilities = model.VideoCapabilities{}
 	}
 	if item.Type == model.AdminModelTypeImage && len(item.TierModels) == 0 {
@@ -369,7 +369,11 @@ func normalizeVideoCapabilities(value model.VideoCapabilities, legacySizes []str
 	defaultRatio := normalizeDefaultString(value.DefaultRatio, ratios)
 	defaultQuality := normalizeDefaultString(value.DefaultQuality, qualities)
 	defaultDuration := normalizeDefaultInt(value.DefaultDuration, durations)
-	referenceImageLimit := clampInt(value.ReferenceImageLimit, 0, 20, normalizeReferenceLimit(legacyReferenceLimit))
+	referenceImageFallback := 0
+	if isEmptyVideoCapabilities(value) {
+		referenceImageFallback = normalizeReferenceLimit(legacyReferenceLimit)
+	}
+	referenceImageLimit := clampInt(value.ReferenceImageLimit, 0, 20, referenceImageFallback)
 	referenceVideoLimit := clampInt(value.ReferenceVideoLimit, 0, 20, 0)
 	referenceAudioLimit := clampInt(value.ReferenceAudioLimit, 0, 5, 0)
 	referenceVideoMaxSeconds := clampInt(value.ReferenceVideoMaxSeconds, 1, 300, 15)
@@ -451,6 +455,23 @@ func normalizeDefaultString(value string, allowed []string) string {
 		return allowed[0]
 	}
 	return ""
+}
+
+func isEmptyVideoCapabilities(value model.VideoCapabilities) bool {
+	return strings.TrimSpace(value.Market) == "" &&
+		len(value.Ratios) == 0 &&
+		len(value.Qualities) == 0 &&
+		len(value.Durations) == 0 &&
+		strings.TrimSpace(value.DefaultRatio) == "" &&
+		strings.TrimSpace(value.DefaultQuality) == "" &&
+		value.DefaultDuration == 0 &&
+		value.ReferenceImageLimit == 0 &&
+		value.ReferenceVideoLimit == 0 &&
+		value.ReferenceVideoMaxSeconds == 0 &&
+		value.ReferenceAudioLimit == 0 &&
+		!value.SupportsImageReferences &&
+		!value.SupportsVideoReferences &&
+		!value.SupportsAudioReferences
 }
 
 func normalizeDefaultInt(value int, allowed []int) int {

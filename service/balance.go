@@ -19,8 +19,11 @@ import (
 const balanceCacheTTL = 15 * time.Second
 
 type BalanceResult struct {
-	Username   string `json:"username"`
-	BalanceUSD string `json:"balanceUsd"`
+	Username      string `json:"username"`
+	BalanceUSD    string `json:"balanceUsd"`
+	KeyName       string `json:"keyName"`
+	KeyBalanceUSD string `json:"keyBalanceUsd"`
+	KeyLimited    bool   `json:"keyLimited"`
 }
 
 type balanceCacheItem struct {
@@ -103,34 +106,128 @@ func queryUpstreamBalance(setting model.BalanceSetting, key string) (BalanceResu
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
+			Username      string `json:"username"`
+			BalanceUSD    any    `json:"balanceUsd"`
+			KeyName       string `json:"keyName"`
+			KeyBalanceUSD any    `json:"keyBalanceUsd"`
+			KeyLimited    any    `json:"keyLimited"`
 			User struct {
 				Username   string `json:"username"`
 				BalanceUSD any    `json:"balanceUsd"`
 			} `json:"user"`
+			Key struct {
+				Name           string `json:"name"`
+				KeyName        string `json:"keyName"`
+				BalanceUSD     any    `json:"balanceUsd"`
+				KeyBalanceUSD  any    `json:"keyBalanceUsd"`
+				UnlimitedQuota any    `json:"unlimited_quota"`
+				Unlimited      any    `json:"unlimited"`
+				Limited        any    `json:"limited"`
+				KeyLimited     any    `json:"keyLimited"`
+			} `json:"key"`
+			Token struct {
+				Name           string `json:"name"`
+				KeyName        string `json:"keyName"`
+				BalanceUSD     any    `json:"balanceUsd"`
+				KeyBalanceUSD  any    `json:"keyBalanceUsd"`
+				UnlimitedQuota any    `json:"unlimited_quota"`
+				Unlimited      any    `json:"unlimited"`
+				Limited        any    `json:"limited"`
+				KeyLimited     any    `json:"keyLimited"`
+			} `json:"token"`
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(responseBody, &payload)
-	if payload.Code != 0 || strings.TrimSpace(payload.Data.User.Username) == "" {
+	username := firstBalanceNonEmpty(payload.Data.User.Username, payload.Data.Username)
+	balanceUSD := firstBalanceNonEmpty(toBalanceString(payload.Data.User.BalanceUSD), toBalanceString(payload.Data.BalanceUSD))
+	if payload.Code != 0 || username == "" {
 		if strings.TrimSpace(payload.Msg) != "" {
 			return BalanceResult{}, safeMessageError{message: payload.Msg}
 		}
 		return BalanceResult{}, safeMessageError{message: "API Key 无法查询余额"}
 	}
+	keyName := firstBalanceNonEmpty(payload.Data.KeyName, payload.Data.Key.KeyName, payload.Data.Key.Name, payload.Data.Token.KeyName, payload.Data.Token.Name)
+	keyBalance := firstBalanceNonEmpty(toBalanceString(payload.Data.KeyBalanceUSD), toBalanceString(payload.Data.Key.KeyBalanceUSD), toBalanceString(payload.Data.Key.BalanceUSD), toBalanceString(payload.Data.Token.KeyBalanceUSD), toBalanceString(payload.Data.Token.BalanceUSD))
+	unlimitedValues := []any{payload.Data.Key.UnlimitedQuota, payload.Data.Key.Unlimited, payload.Data.Token.UnlimitedQuota, payload.Data.Token.Unlimited}
+	keyLimited := firstBool(payload.Data.KeyLimited, payload.Data.Key.KeyLimited, payload.Data.Key.Limited, payload.Data.Token.KeyLimited, payload.Data.Token.Limited) || keyBalance != "" || hasExplicitFalse(unlimitedValues...)
+	if firstBool(unlimitedValues...) {
+		keyLimited = false
+	}
 	return BalanceResult{
-		Username:   strings.TrimSpace(payload.Data.User.Username),
-		BalanceUSD: strings.TrimSpace(toBalanceString(payload.Data.User.BalanceUSD)),
+		Username:      strings.TrimSpace(username),
+		BalanceUSD:    strings.TrimSpace(balanceUSD),
+		KeyName:       strings.TrimSpace(keyName),
+		KeyBalanceUSD: strings.TrimSpace(keyBalance),
+		KeyLimited:    keyLimited,
 	}, nil
 }
 
 func toBalanceString(value any) string {
 	switch item := value.(type) {
 	case string:
-		return item
+		return strings.TrimSpace(item)
 	case float64:
 		return strconv.FormatFloat(item, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(item)
+	case int64:
+		return strconv.FormatInt(item, 10)
+	case json.Number:
+		return item.String()
 	default:
-		return "0"
+		return ""
 	}
+}
+
+func firstBalanceNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstBool(values ...any) bool {
+	for _, value := range values {
+		switch item := value.(type) {
+		case bool:
+			if item {
+				return true
+			}
+		case string:
+			normalized := strings.ToLower(strings.TrimSpace(item))
+			if normalized == "true" || normalized == "1" || normalized == "yes" {
+				return true
+			}
+		case float64:
+			if item > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasExplicitFalse(values ...any) bool {
+	for _, value := range values {
+		switch item := value.(type) {
+		case bool:
+			if !item {
+				return true
+			}
+		case string:
+			normalized := strings.ToLower(strings.TrimSpace(item))
+			if normalized == "false" || normalized == "0" || normalized == "no" {
+				return true
+			}
+		case float64:
+			if item == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func readBalanceCache(key string) (BalanceResult, bool) {

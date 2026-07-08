@@ -88,6 +88,6 @@ function uniqueDurations(values: number[] | undefined) {
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
-    const next = Math.floor(Math.abs(Number(value)) || fallback);
+    const next = value === undefined || value === null || value === "" || Number.isNaN(Number(value)) ? fallback : Math.floor(Math.abs(Number(value)));
     return Math.max(min, Math.min(max, next));
 }

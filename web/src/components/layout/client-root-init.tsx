@@ -20,11 +20,23 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
         // 加载公共设置
         void useConfigStore.getState().loadPublicSettings();
+        void useConfigStore.getState().refreshUserModels().catch(() => undefined);
 
         // 非后台登录页时恢复本地 API Key / 后台状态
         if (!isLoginPage) {
             void useUserStore.getState().hydrateUser();
         }
+    }, [isLoginPage]);
+
+    useEffect(() => {
+        if (isLoginPage) return;
+        const refreshModels = () => void useConfigStore.getState().refreshUserModels().catch(() => undefined);
+        window.addEventListener("focus", refreshModels);
+        document.addEventListener("visibilitychange", refreshModels);
+        return () => {
+            window.removeEventListener("focus", refreshModels);
+            document.removeEventListener("visibilitychange", refreshModels);
+        };
     }, [isLoginPage]);
 
     useEffect(() => {
