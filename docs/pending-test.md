@@ -71,3 +71,4 @@
 - 新增 `grok-video-wrapper` 独立服务：面向 NewAPI 的 OpenAI 视频异步接口暴露 `/v1/models`、`/v1/videos`、`/v1/videos/{task_id}`、`/v1/videos/{task_id}/content`，内部接入 Google 文档里的 `https://api.119337.xyz/v1/video/generations`；创建任务立即返回 `queued`，由 NewAPI 自身轮询，失败状态返回 `failed` 和错误原因以触发 NewAPI 异步退款，成功后通过 content 接口代理 mp4。
 - 修复视频模型“是否必须参考图”配置的布尔归一化，避免后台返回 "false" 时前端仍提示必须添加参考图；画布已有图片作为参考图且需要补传图床时，节点会显示上传中或失败状态，补传成功后恢复正常。
 - 视频工作台改为先创建 `/videos` 异步任务并把任务 ID 保存到本地 pending；页面刷新、部署重启或请求断开后，重新打开视频工作台会自动继续轮询未完成任务，完成后写入右侧视频生成记录。
+- 余额查询兼容上游返回的 `unlimitedQuota` 字段；无限额度 Key 不再误判为密钥限额，不会显示密钥名和 `$0`，会回到显示客户名和客户实际余额。

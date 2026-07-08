@@ -121,6 +121,7 @@ func queryUpstreamBalance(setting model.BalanceSetting, key string) (BalanceResu
 				BalanceUSD     any    `json:"balanceUsd"`
 				KeyBalanceUSD  any    `json:"keyBalanceUsd"`
 				UnlimitedQuota any    `json:"unlimited_quota"`
+				UnlimitedQuotaCamel any `json:"unlimitedQuota"`
 				Unlimited      any    `json:"unlimited"`
 				Limited        any    `json:"limited"`
 				KeyLimited     any    `json:"keyLimited"`
@@ -131,6 +132,7 @@ func queryUpstreamBalance(setting model.BalanceSetting, key string) (BalanceResu
 				BalanceUSD     any    `json:"balanceUsd"`
 				KeyBalanceUSD  any    `json:"keyBalanceUsd"`
 				UnlimitedQuota any    `json:"unlimited_quota"`
+				UnlimitedQuotaCamel any `json:"unlimitedQuota"`
 				Unlimited      any    `json:"unlimited"`
 				Limited        any    `json:"limited"`
 				KeyLimited     any    `json:"keyLimited"`
@@ -148,7 +150,7 @@ func queryUpstreamBalance(setting model.BalanceSetting, key string) (BalanceResu
 	}
 	keyName := firstBalanceNonEmpty(payload.Data.KeyName, payload.Data.Key.KeyName, payload.Data.Key.Name, payload.Data.Token.KeyName, payload.Data.Token.Name)
 	keyBalance := firstBalanceNonEmpty(toBalanceString(payload.Data.KeyBalanceUSD), toBalanceString(payload.Data.Key.KeyBalanceUSD), toBalanceString(payload.Data.Key.BalanceUSD), toBalanceString(payload.Data.Token.KeyBalanceUSD), toBalanceString(payload.Data.Token.BalanceUSD))
-	unlimitedValues := []any{payload.Data.Key.UnlimitedQuota, payload.Data.Key.Unlimited, payload.Data.Token.UnlimitedQuota, payload.Data.Token.Unlimited}
+	unlimitedValues := []any{payload.Data.Key.UnlimitedQuota, payload.Data.Key.UnlimitedQuotaCamel, payload.Data.Key.Unlimited, payload.Data.Token.UnlimitedQuota, payload.Data.Token.UnlimitedQuotaCamel, payload.Data.Token.Unlimited}
 	keyLimited := firstBool(payload.Data.KeyLimited, payload.Data.Key.KeyLimited, payload.Data.Key.Limited, payload.Data.Token.KeyLimited, payload.Data.Token.Limited) || keyBalance != "" || hasExplicitFalse(unlimitedValues...)
 	if firstBool(unlimitedValues...) {
 		keyLimited = false
