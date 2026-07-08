@@ -11,12 +11,22 @@ type ModelListPayload = {
 };
 
 export async function POST(request: NextRequest) {
-    const payload = (await request.json().catch(() => null)) as { baseUrl?: string; apiKey?: string } | null;
-    const baseUrl = normalizeBaseUrl(payload?.baseUrl || "");
+    const payload = (await request.json().catch(() => null)) as { baseUrl?: string; baseUrls?: string[]; apiKey?: string } | null;
+    const baseUrls = Array.from(new Set([...(payload?.baseUrls || []), payload?.baseUrl || ""].map(normalizeBaseUrl).filter(Boolean)));
     const apiKey = String(payload?.apiKey || "").trim();
-    if (!baseUrl) return Response.json({ code: 1, data: null, msg: "请先填写请求地址" }, { status: 400 });
+    if (!baseUrls.length) return Response.json({ code: 1, data: null, msg: "请先配置后台模型请求地址" }, { status: 400 });
     if (!apiKey) return Response.json({ code: 1, data: null, msg: "请先填写 API Key" }, { status: 400 });
 
+    const catalogs = Object.fromEntries(await Promise.all(baseUrls.map(async (baseUrl) => [baseUrl, await fetchModelIds(baseUrl, apiKey)])));
+    if (!Object.values(catalogs).some((ids) => ids.length > 0)) return Response.json({ code: 1, data: null, msg: "接口没有返回可识别的模型列表" }, { status: 400 });
+    return Response.json({ code: 0, data: catalogs, msg: "ok" });
+}
+
+function normalizeBaseUrl(value: string) {
+    return value.trim().replace(/\/+$/, "");
+}
+
+async function fetchModelIds(baseUrl: string, apiKey: string) {
     const target = `${baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`}/models`;
     try {
         const response = await fetch(target, {
@@ -25,17 +35,11 @@ export async function POST(request: NextRequest) {
             cache: "no-store",
         });
         const data = (await response.json().catch(() => null)) as ModelListPayload | null;
-        if (!response.ok) return Response.json({ code: 1, data: null, msg: readError(data) || `模型列表检测失败：${response.status}` }, { status: response.status });
-        const modelIds = readModelIds(data);
-        if (!modelIds.length) return Response.json({ code: 1, data: null, msg: "接口没有返回可识别的模型列表" }, { status: 400 });
-        return Response.json({ code: 0, data: modelIds, msg: "ok" });
+        if (!response.ok) return [];
+        return readModelIds(data);
     } catch {
-        return Response.json({ code: 1, data: null, msg: "模型列表检测失败，请检查请求地址或网络" }, { status: 502 });
+        return [];
     }
-}
-
-function normalizeBaseUrl(value: string) {
-    return value.trim().replace(/\/+$/, "");
 }
 
 function readModelIds(payload: ModelListPayload | null) {
@@ -52,8 +56,4 @@ function readModelIds(payload: ModelListPayload | null) {
                 .filter(Boolean),
         ),
     );
-}
-
-function readError(payload: ModelListPayload | null) {
-    return payload?.error?.message || payload?.msg || payload?.message || "";
 }

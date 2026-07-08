@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { apiGet } from "@/services/api/request";
+import { apiGet, apiPost } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 import { DEFAULT_IMAGE_ASPECT_VALUES, IMAGE_MODEL_TIERS, type ImageModelTier } from "@/constant/image-model-options";
 import { normalizeVideoCapabilities, type VideoModelCapabilities } from "@/constant/video-model-options";
@@ -33,9 +33,8 @@ export type StoredUserModel = {
 export type UserModelConfigMode = "single" | "aggregate";
 
 export type StoredAggregateModelConfig = {
-    baseUrl?: string;
     apiKey?: string;
-    availableModelIds?: string[];
+    catalogs?: Record<string, string[]>;
     checkedAt?: number;
 };
 
@@ -109,6 +108,7 @@ type ConfigStore = {
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     loadPublicSettings: () => Promise<void>;
+    refreshUserModels: () => Promise<void>;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
@@ -255,13 +255,13 @@ export function readUserModelConfig() {
         const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
         const mode: UserModelConfigMode = parsed.mode === "aggregate" ? "aggregate" : "single";
         const selectedIds = new Set(parsed.modelIds || []);
-        const sourceModels = (parsed.models || []).filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
+        const sourceModels = normalizeStoredUserModels(parsed.models || []).filter((model) => !selectedIds.size || selectedIds.has(model.id));
         const apiKeys = parsed.apiKeys || {};
         const aggregate = normalizeAggregateConfig(parsed.aggregate);
         const models =
             mode === "aggregate"
                 ? sourceModels.flatMap((model) => {
-                      const next = filterAggregateModel(model, aggregate.availableModelIds || []);
+                      const next = filterAggregateModel(model, aggregate.catalogs || {});
                       return next ? [next] : [];
                   })
                 : sourceModels.filter((model) => Boolean(apiKeys[model.id]?.trim()));
@@ -275,7 +275,7 @@ export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.m
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
-    if (userModelConfig.mode === "aggregate") return { baseUrl: userModelConfig.aggregate.baseUrl || model.apiUrl, apiKey: userModelConfig.aggregate.apiKey || "", modelId: resolveRuntimeModelId(model, config.imageTier) };
+    if (userModelConfig.mode === "aggregate") return { baseUrl: model.apiUrl, apiKey: userModelConfig.aggregate.apiKey || "", modelId: resolveRuntimeModelId(model, config.imageTier) };
     return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim(), modelId: resolveRuntimeModelId(model, config.imageTier) };
 }
 
@@ -311,6 +311,38 @@ export const useConfigStore = create<ConfigStore>()(
                 } finally {
                     set({ isPublicSettingsLoading: false });
                 }
+            },
+            refreshUserModels: async () => {
+                if (typeof window === "undefined") return;
+                const models = normalizeStoredUserModels(await apiGet<StoredUserModel[]>("/api/models"));
+                const parsed = readStoredUserModelConfig();
+                const aggregate = normalizeAggregateConfig(parsed.aggregate);
+                if (parsed.mode === "aggregate" && aggregate.apiKey) {
+                    const baseUrls = Array.from(new Set(models.map((model) => normalizeModelApiUrl(model.apiUrl)).filter(Boolean)));
+                    if (baseUrls.length) {
+                        try {
+                            aggregate.catalogs = normalizeAggregateConfig({ catalogs: await apiPost<Record<string, string[]>>("/api/aggregate-models", { baseUrls, apiKey: aggregate.apiKey }) }).catalogs;
+                            aggregate.checkedAt = Date.now();
+                        } catch {
+                            // 保留上次检测结果，避免临时网络错误清空可用模型。
+                        }
+                    }
+                }
+                window.localStorage.setItem(
+                    USER_MODEL_CONFIG_KEY,
+                    JSON.stringify({
+                        ...parsed,
+                        version: 4,
+                        mode: parsed.mode === "aggregate" ? "aggregate" : "single",
+                        aggregate,
+                        apiKeys: parsed.apiKeys || {},
+                        models,
+                        updatedAt: Date.now(),
+                    }),
+                );
+                set((state) => ({
+                    config: resolveEffectiveConfig({ ...state.config }, state.publicSettings?.modelChannel || null),
+                }));
             },
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),
@@ -420,16 +452,23 @@ export function imageReferenceLimit(config: AiConfig, modelName = config.model |
 }
 
 function normalizeAggregateConfig(value?: StoredAggregateModelConfig): StoredAggregateModelConfig {
+    const catalogs = Object.fromEntries(
+        Object.entries(value?.catalogs || {})
+            .map(([baseUrl, modelIds]) => [
+                normalizeModelApiUrl(baseUrl),
+                Array.from(new Set((modelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
+            ])
+            .filter(([baseUrl, modelIds]) => Boolean(baseUrl) && modelIds.length > 0),
+    );
     return {
-        baseUrl: normalizeBaseUrl(value?.baseUrl || ""),
         apiKey: String(value?.apiKey || "").trim(),
-        availableModelIds: Array.from(new Set((value?.availableModelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
+        catalogs,
         checkedAt: value?.checkedAt,
     };
 }
 
-function filterAggregateModel(model: StoredUserModel, availableModelIds: string[]) {
-    const available = new Set(availableModelIds.map((item) => item.trim()).filter(Boolean));
+function filterAggregateModel(model: StoredUserModel, catalogs: Record<string, string[]>) {
+    const available = new Set((catalogs[normalizeModelApiUrl(model.apiUrl)] || []).map((item) => item.trim()).filter(Boolean));
     if (!available.size) return null;
     if (model.type === "image") {
         const tierModels = Object.fromEntries(Object.entries(model.tierModels || {}).filter(([, modelId]) => available.has(String(modelId || "").trim())));
@@ -440,8 +479,21 @@ function filterAggregateModel(model: StoredUserModel, availableModelIds: string[
     return modelId && available.has(modelId) ? model : null;
 }
 
-function normalizeBaseUrl(value: string) {
+export function normalizeModelApiUrl(value: string) {
     return value.trim().replace(/\/+$/, "");
+}
+
+function normalizeStoredUserModels(models: StoredUserModel[]) {
+    return models.filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl);
+}
+
+function readStoredUserModelConfig() {
+    if (typeof window === "undefined") return {} as StoredUserModelConfig;
+    try {
+        return JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
+    } catch {
+        return {};
+    }
 }
 
 export function videoCapabilitiesForModel(config: AiConfig, modelName = config.videoModel || config.model) {

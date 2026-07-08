@@ -285,6 +285,6 @@ export async function fetchPublicModels() {
     return apiGet<AdminModel[]>("/api/models");
 }
 
-export async function detectAggregateModels(baseUrl: string, apiKey: string) {
-    return apiPost<string[]>("/api/aggregate-models", { baseUrl, apiKey });
+export async function detectAggregateModels(baseUrls: string[], apiKey: string) {
+    return apiPost<Record<string, string[]>>("/api/aggregate-models", { baseUrls, apiKey });
 }

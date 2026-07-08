@@ -7,7 +7,7 @@ import { KeyRound } from "lucide-react";
 import { IMAGE_MODEL_TIERS } from "@/constant/image-model-options";
 import { normalizeVideoCapabilities } from "@/constant/video-model-options";
 import { detectAggregateModels, fetchPublicModels, type AdminModel } from "@/services/api/admin";
-import { DEFAULT_POOL_API_BASE_URL, USER_MODEL_CONFIG_KEY, useConfigStore, type StoredAggregateModelConfig, type UserModelConfigMode } from "@/stores/use-config-store";
+import { normalizeModelApiUrl, USER_MODEL_CONFIG_KEY, useConfigStore, type StoredAggregateModelConfig, type UserModelConfigMode } from "@/stores/use-config-store";
 import type { ImageKeyTier } from "@/types/api-keys";
 
 const modelTypeLabels: Record<AdminModel["type"], string> = {
@@ -32,19 +32,36 @@ export function AppConfigModal() {
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const updateConfig = useConfigStore((state) => state.updateConfig);
+    const refreshUserModels = useConfigStore((state) => state.refreshUserModels);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const [models, setModels] = useState<AdminModel[]>([]);
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
     const [mode, setMode] = useState<UserModelConfigMode>("single");
-    const [aggregate, setAggregate] = useState<StoredAggregateModelConfig>({ baseUrl: `${DEFAULT_POOL_API_BASE_URL}/v1`, apiKey: "", availableModelIds: [] });
+    const [aggregate, setAggregate] = useState<StoredAggregateModelConfig>({ apiKey: "", catalogs: {} });
     const [isCheckingAggregate, setIsCheckingAggregate] = useState(false);
 
     useEffect(() => {
+        void refreshUserModels().catch(() => undefined);
+        const refresh = () => void refreshUserModels().catch(() => undefined);
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", refresh);
+        return () => {
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", refresh);
+        };
+    }, [refreshUserModels]);
+
+    useEffect(() => {
         if (!isConfigOpen) return;
-        void loadModels();
-        loadCurrentConfig();
+        void openConfig();
     }, [isConfigOpen]);
+
+    const openConfig = async () => {
+        await refreshUserModels().catch(() => undefined);
+        await loadModels();
+        loadCurrentConfig();
+    };
 
     const loadModels = async () => {
         try {
@@ -60,16 +77,15 @@ export function AppConfigModal() {
             const config = JSON.parse(localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as { mode?: UserModelConfigMode; apiKeys?: Record<string, string>; aggregate?: StoredAggregateModelConfig };
             setMode(config.mode === "aggregate" ? "aggregate" : "single");
             setAggregate({
-                baseUrl: config.aggregate?.baseUrl || `${DEFAULT_POOL_API_BASE_URL}/v1`,
                 apiKey: config.aggregate?.apiKey || "",
-                availableModelIds: config.aggregate?.availableModelIds || [],
+                catalogs: normalizeCatalogs(config.aggregate?.catalogs || {}),
                 checkedAt: config.aggregate?.checkedAt,
             });
             setApiKeys(config.apiKeys || {});
             form.setFieldsValue({ apiKeys: config.apiKeys || {} });
         } catch {
             setMode("single");
-            setAggregate({ baseUrl: `${DEFAULT_POOL_API_BASE_URL}/v1`, apiKey: "", availableModelIds: [] });
+            setAggregate({ apiKey: "", catalogs: {} });
             setApiKeys({});
             form.resetFields();
         }
@@ -78,19 +94,19 @@ export function AppConfigModal() {
     const saveConfig = async () => {
         const cleanedApiKeys = Object.fromEntries(Object.entries(apiKeys).map(([id, value]) => [id, value.trim()]).filter(([, value]) => value));
         let cleanedAggregate = normalizeAggregate(aggregate);
-        if (mode === "aggregate" && cleanedAggregate.baseUrl && cleanedAggregate.apiKey && !cleanedAggregate.availableModelIds?.length) {
+        if (mode === "aggregate" && cleanedAggregate.apiKey && !aggregateCatalogModelCount(cleanedAggregate.catalogs || {})) {
             const detected = await checkAggregateModels(cleanedAggregate);
             if (!detected) return;
             cleanedAggregate = detected;
         }
-        const configuredModels = mode === "aggregate" ? aggregateConfiguredModels(models, cleanedAggregate.availableModelIds || []) : models.filter((model) => cleanedApiKeys[model.id]);
-        const matchedAggregateModelIds = mode === "aggregate" ? cleanedAggregate.availableModelIds || [] : [];
+        const configuredModels = mode === "aggregate" ? aggregateConfiguredModels(models, cleanedAggregate.catalogs || {}) : models.filter((model) => cleanedApiKeys[model.id]);
+        const matchedAggregateCatalogs = mode === "aggregate" ? cleanedAggregate.catalogs || {} : {};
 
         try {
             localStorage.setItem(
                 USER_MODEL_CONFIG_KEY,
                 JSON.stringify({
-                    version: 3,
+                    version: 4,
                     mode,
                     aggregate: cleanedAggregate,
                     apiKeys: cleanedApiKeys,
@@ -105,11 +121,11 @@ export function AppConfigModal() {
             const promptModel = configuredModels.find((model) => model.type === "prompt");
             updateConfig("model", imageModel?.name || "");
             updateConfig("imageModel", imageModel?.name || "");
-            updateConfig("imageTier", defaultTierForConfiguredModel(imageModel, matchedAggregateModelIds) as ImageKeyTier);
+            updateConfig("imageTier", defaultTierForConfiguredModel(imageModel, matchedAggregateCatalogs) as ImageKeyTier);
             updateConfig("videoModel", videoModel?.name || "");
             updateConfig("parseModel", parseModel?.name || "");
             updateConfig("promptModel", promptModel?.name || "");
-            updateConfig("baseUrl", mode === "aggregate" ? cleanedAggregate.baseUrl || "" : imageModel?.apiUrl || "");
+            updateConfig("baseUrl", imageModel?.apiUrl || "");
             updateConfig("apiKey", mode === "aggregate" ? cleanedAggregate.apiKey || "" : imageModel ? cleanedApiKeys[imageModel.id] || "" : "");
 
             message.success(configuredModels.length ? "配置已保存" : "配置已清空");
@@ -120,17 +136,22 @@ export function AppConfigModal() {
     };
 
     const checkAggregateModels = async (target = normalizeAggregate(aggregate)) => {
-        if (!target.baseUrl || !target.apiKey) {
-            message.warning("请先填写聚合请求地址和 API Key");
+        const baseUrls = Array.from(new Set(models.map((model) => normalizeModelApiUrl(model.apiUrl)).filter(Boolean)));
+        if (!target.apiKey) {
+            message.warning("请先填写聚合 API Key");
+            return null;
+        }
+        if (!baseUrls.length) {
+            message.warning("后台还没有可检测的模型请求地址");
             return null;
         }
         setIsCheckingAggregate(true);
         try {
-            const availableModelIds = await detectAggregateModels(target.baseUrl, target.apiKey);
-            const next = { ...target, availableModelIds, checkedAt: Date.now() };
+            const catalogs = await detectAggregateModels(baseUrls, target.apiKey);
+            const next = { ...target, catalogs: normalizeCatalogs(catalogs), checkedAt: Date.now() };
             setAggregate(next);
-            const matched = aggregateConfiguredModels(models, availableModelIds);
-            message.success(`检测到 ${availableModelIds.length} 个可调用模型，已匹配 ${matched.length} 个后台模型`);
+            const matched = aggregateConfiguredModels(models, next.catalogs || {});
+            message.success(`检测到 ${aggregateCatalogModelCount(next.catalogs || {})} 个可调用模型，已匹配 ${matched.length} 个后台模型`);
             return next;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "检测模型列表失败");
@@ -226,18 +247,17 @@ export function AppConfigModal() {
 }
 
 function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck }: { models: AdminModel[]; aggregate: StoredAggregateModelConfig; isChecking: boolean; onChange: (value: StoredAggregateModelConfig) => void; onCheck: () => void }) {
-    const ids = aggregate.availableModelIds || [];
-    const matched = aggregateConfiguredModels(models, ids);
+    const catalogs = aggregate.catalogs || {};
+    const matched = aggregateConfiguredModels(models, catalogs);
     const matchedIds = new Set(matched.map((model) => model.id));
     return (
         <div className="space-y-3">
             <div className="rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
                 <div className="grid gap-3">
-                    <Input value={aggregate.baseUrl || ""} onChange={(event) => onChange({ ...aggregate, baseUrl: event.target.value, availableModelIds: [] })} placeholder="请求地址，例如 https://api.zmoapi.cn/v1" />
-                    <Input.Password prefix={<KeyRound className="size-4 text-stone-400" />} value={aggregate.apiKey || ""} onChange={(event) => onChange({ ...aggregate, apiKey: event.target.value, availableModelIds: [] })} placeholder="sk-..." />
+                    <Input.Password prefix={<KeyRound className="size-4 text-stone-400" />} value={aggregate.apiKey || ""} onChange={(event) => onChange({ ...aggregate, apiKey: event.target.value, catalogs: {} })} placeholder="sk-..." />
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <Typography.Text type="secondary" className="text-xs">
-                            {ids.length ? `已检测到 ${ids.length} 个模型` : "检测后会按后台模型 ID 自动匹配可用模型"}
+                            {aggregateCatalogModelCount(catalogs) ? `已检测到 ${aggregateCatalogModelCount(catalogs)} 个模型` : "请求地址来自后台模型配置，检测后按模型 ID 自动匹配"}
                         </Typography.Text>
                         <Button loading={isChecking} onClick={onCheck}>
                             检测模型
@@ -248,7 +268,7 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
             {models.length ? (
                 <div className="space-y-2">
                     {models.map((model) => {
-                        const summary = aggregateMatchSummary(model, ids);
+                        const summary = aggregateMatchSummary(model, catalogs);
                         const active = matchedIds.has(model.id);
                         return (
                             <div key={model.id} className="rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/40">
@@ -261,7 +281,7 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                                             <Tag color={modelTypeColors[model.type]}>{modelTypeLabels[model.type]}</Tag>
                                         </div>
                                         <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                            {model.type === "image" ? "匹配清晰度模型 ID" : model.modelId || model.name}
+                                            {model.apiUrl}
                                         </Typography.Text>
                                     </div>
                                     <Tag color={active ? "success" : undefined}>{active ? "已匹配" : "未匹配"}</Tag>
@@ -320,19 +340,18 @@ function VideoModelMeta({ model }: { model: AdminModel }) {
 
 function normalizeAggregate(value: StoredAggregateModelConfig) {
     return {
-        baseUrl: (value.baseUrl || "").trim().replace(/\/+$/, ""),
         apiKey: (value.apiKey || "").trim(),
-        availableModelIds: Array.from(new Set((value.availableModelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
+        catalogs: normalizeCatalogs(value.catalogs || {}),
         checkedAt: value.checkedAt,
     };
 }
 
-function aggregateConfiguredModels(models: AdminModel[], availableModelIds: string[]) {
-    return models.filter((model) => aggregateMatchSummary(model, availableModelIds).length > 0);
+function aggregateConfiguredModels(models: AdminModel[], catalogs: Record<string, string[]>) {
+    return models.filter((model) => aggregateMatchSummary(model, catalogs).length > 0);
 }
 
-function aggregateMatchSummary(model: AdminModel, availableModelIds: string[]) {
-    const available = new Set(availableModelIds.map((item) => item.trim()).filter(Boolean));
+function aggregateMatchSummary(model: AdminModel, catalogs: Record<string, string[]>) {
+    const available = new Set((catalogs[normalizeModelApiUrl(model.apiUrl)] || []).map((item) => item.trim()).filter(Boolean));
     if (!available.size) return [];
     if (model.type === "image") {
         return IMAGE_MODEL_TIERS.filter((tier) => available.has(String(model.tierModels?.[tier] || "").trim()));
@@ -341,10 +360,26 @@ function aggregateMatchSummary(model: AdminModel, availableModelIds: string[]) {
     return modelId && available.has(modelId) ? [modelId] : [];
 }
 
-function defaultTierForConfiguredModel(model: AdminModel | undefined, availableModelIds: string[]) {
+function defaultTierForConfiguredModel(model: AdminModel | undefined, catalogs: Record<string, string[]>) {
     if (!model || model.type !== "image") return "1k";
-    const tiers = availableModelIds.length ? aggregateMatchSummary(model, availableModelIds) : IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]);
+    const tiers = aggregateCatalogModelCount(catalogs) ? aggregateMatchSummary(model, catalogs) : IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]);
     if (model.defaultTier && tiers.includes(model.defaultTier)) return model.defaultTier;
     if (tiers.includes("1k")) return "1k";
     return tiers[0] || "1k";
+}
+
+function normalizeCatalogs(catalogs: Record<string, string[]>) {
+    const entries = Object.entries(catalogs)
+        .map(([baseUrl, modelIds]) => ({
+            baseUrl: normalizeModelApiUrl(baseUrl),
+            modelIds: Array.from(new Set((modelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
+        }))
+        .filter((item) => item.baseUrl && item.modelIds.length > 0);
+    return Object.fromEntries(
+        entries.map((item) => [item.baseUrl, item.modelIds]),
+    );
+}
+
+function aggregateCatalogModelCount(catalogs: Record<string, string[]>) {
+    return Object.values(catalogs).reduce((total, ids) => total + ids.length, 0);
 }
