@@ -65,7 +65,7 @@ export function normalizeVideoCapabilities(input?: VideoModelCapabilities | null
         defaultQuality: qualities.includes(String(input?.defaultQuality || "")) ? String(input?.defaultQuality) : qualities[0],
         defaultDuration: durations.includes(Number(input?.defaultDuration)) ? Number(input?.defaultDuration) : durations[0],
         referenceImageLimit: clampInt(input?.referenceImageLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceImageLimit),
-        requireImageReference: Boolean(input?.requireImageReference && clampInt(input?.referenceImageLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceImageLimit) > 0),
+        requireImageReference: normalizeBoolean(input?.requireImageReference) && clampInt(input?.referenceImageLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceImageLimit) > 0,
         referenceVideoLimit: clampInt(input?.referenceVideoLimit, 0, 20, DEFAULT_VIDEO_CAPABILITIES.referenceVideoLimit),
         referenceVideoMaxSeconds: clampInt(input?.referenceVideoMaxSeconds, 1, 300, DEFAULT_VIDEO_CAPABILITIES.referenceVideoMaxSeconds),
         referenceAudioLimit: clampInt(input?.referenceAudioLimit, 0, 5, DEFAULT_VIDEO_CAPABILITIES.referenceAudioLimit),
@@ -93,4 +93,10 @@ function uniqueDurations(values: number[] | undefined) {
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
     const next = value === undefined || value === null || value === "" || Number.isNaN(Number(value)) ? fallback : Math.floor(Math.abs(Number(value)));
     return Math.max(min, Math.min(max, next));
+}
+
+function normalizeBoolean(value: unknown) {
+    if (typeof value === "string") return ["true", "1", "yes", "on"].includes(value.trim().toLowerCase());
+    if (typeof value === "number") return value === 1;
+    return value === true;
 }

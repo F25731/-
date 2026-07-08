@@ -10,7 +10,7 @@ import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } 
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { ensureReferenceImagesRemoteUrls, uploadReferenceImage } from "@/services/image-bed";
+import { ensureReferenceImagesRemoteUrls, imageAiUrl, uploadReferenceImage } from "@/services/image-bed";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -1934,6 +1934,25 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, []);
 
+    const markReferenceRemoteUpload = useCallback((images: ReferenceImage[], status: typeof NODE_STATUS_LOADING | typeof NODE_STATUS_SUCCESS | typeof NODE_STATUS_ERROR, errorDetails?: string) => {
+        const ids = new Set(images.map((image) => image.id).filter(Boolean));
+        if (!ids.size) return;
+        setNodes((prev) =>
+            prev.map((node) =>
+                ids.has(node.id) && node.type === CanvasNodeType.Image
+                    ? {
+                          ...node,
+                          metadata: {
+                              ...node.metadata,
+                              status,
+                              errorDetails: status === NODE_STATUS_ERROR ? errorDetails : undefined,
+                          },
+                      }
+                    : node,
+            ),
+        );
+    }, []);
+
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -1975,7 +1994,16 @@ function InfiniteCanvasPage() {
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const editReferenceImages = sourceReference.length ? [...sourceReference, ...generationContext.referenceImages.filter((image) => image.id !== sourceReference[0]?.id)] : referenceImages;
-                    const aiEditReferenceImages = editReferenceImages.length ? await ensureReferenceImagesRemoteUrls(editReferenceImages) : [];
+                    const referencesNeedingUpload = editReferenceImages.filter((image) => !imageAiUrl(image));
+                    if (referencesNeedingUpload.length) markReferenceRemoteUpload(referencesNeedingUpload, NODE_STATUS_LOADING);
+                    const aiEditReferenceImages = editReferenceImages.length
+                        ? await ensureReferenceImagesRemoteUrls(editReferenceImages).catch((error) => {
+                              const errorDetails = error instanceof Error ? error.message : "参考图上传失败";
+                              if (referencesNeedingUpload.length) markReferenceRemoteUpload(referencesNeedingUpload, NODE_STATUS_ERROR, errorDetails);
+                              throw error;
+                          })
+                        : [];
+                    if (referencesNeedingUpload.length) markReferenceRemoteUpload(referencesNeedingUpload, NODE_STATUS_SUCCESS);
                     const generationType = aiEditReferenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, aiEditReferenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
@@ -2214,7 +2242,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, handleAiRequestError, message, openConfigDialog],
+        [effectiveConfig, handleAiRequestError, markReferenceRemoteUpload, message, openConfigDialog],
     );
 
     const handleRetryNode = useCallback(
