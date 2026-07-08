@@ -5,7 +5,6 @@ import type { ReactNode, WheelEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { App, Button, Input, InputNumber, Modal, Select, Space, Tag } from "antd";
 import { ChevronDown, ChevronLeft, ChevronRight, Download, Eye, LoaderCircle, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
-import localforage from "localforage";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
@@ -16,6 +15,7 @@ import { uploadReferenceImage } from "@/services/image-bed";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
+import { detailProjectStore, readStoredDetailProjects, serializeDetailProjects } from "@/app/(user)/detail/project-storage";
 import { defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, USER_MODEL_CONFIG_KEY, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
@@ -68,8 +68,6 @@ type DetailProject = {
 const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
 const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 const DEFAULT_SCREEN_COUNT = 6;
-const detailProjectStore = localforage.createInstance({ name: "infinite-canvas", storeName: "detail_projects" });
-
 export default function DetailWorkbenchPage() {
     const { message, modal } = App.useApp();
     const router = useRouter();
@@ -193,7 +191,29 @@ export default function DetailWorkbenchPage() {
     };
 
     const persistProjects = async (items: DetailProject[]) => {
-        await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeProjects(items));
+        if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+        }
+        await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeDetailProjects(items));
+    };
+
+    const activeProjectSnapshot = (project: DetailProject): DetailProject => ({
+        ...project,
+        updatedAt: new Date().toISOString(),
+        references,
+        productInfo,
+        styleRequest,
+        platform,
+        screenCount,
+        plan,
+        screens,
+        currentIndex,
+    });
+
+    const mergeActiveProjectState = (items: DetailProject[]) => {
+        if (!projectReady || !activeProjectId) return items;
+        return items.map((project) => (project.id === activeProjectId ? activeProjectSnapshot(project) : project));
     };
 
     const loadLlmModels = async () => {
@@ -230,7 +250,8 @@ export default function DetailWorkbenchPage() {
 
     const createProject = (rawTitle?: string) => {
         const now = new Date().toISOString();
-        const title = rawTitle?.trim() || `详情图项目 ${projects.length + 1}`;
+        const mergedProjects = mergeActiveProjectState(projects);
+        const title = rawTitle?.trim() || `详情图项目 ${mergedProjects.length + 1}`;
         const project: DetailProject = {
             id: `detail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             title: "未命名详情图",
@@ -246,10 +267,10 @@ export default function DetailWorkbenchPage() {
             currentIndex: 1,
         };
         project.title = title;
-        const next = [project, ...projects];
+        const next = [project, ...mergedProjects];
         setProjects(next);
         void persistProjects(next);
-        openProject(project);
+        openProject(project, { skipPersistCurrent: true });
     };
 
     const renameActiveProject = (title: string) => {
@@ -268,32 +289,46 @@ export default function DetailWorkbenchPage() {
     };
 
     const closeProjectList = () => {
+        const next = mergeActiveProjectState(projects);
+        setProjects(next);
+        void persistProjects(next);
         setActiveProjectId(null);
         setProjectReady(false);
         if (routeProjectId) router.push("/detail");
     };
 
-    const openProject = (project: DetailProject, options: { pushHistory?: boolean } = {}) => {
+    const openProject = (project: DetailProject, options: { pushHistory?: boolean; skipPersistCurrent?: boolean } = {}) => {
+        let targetProject = project;
+        if (!options.skipPersistCurrent && activeProjectId && activeProjectId !== project.id) {
+            const next = mergeActiveProjectState(projects);
+            targetProject = next.find((item) => item.id === project.id) || project;
+            setProjects(next);
+            void persistProjects(next);
+        }
         if (options.pushHistory !== false) pushProjectHistory(project.id);
         setProjectReady(false);
-        setActiveProjectId(project.id);
-        setReferences(project.references || []);
-        setProductInfo(project.productInfo || "");
-        setStyleRequest(project.styleRequest || "");
-        setPlatform(project.platform || "淘宝");
-        setScreenCount(project.screenCount || DEFAULT_SCREEN_COUNT);
-        setPlan(project.plan || null);
-        setScreens(project.screens || []);
-        setCurrentIndex(project.currentIndex || 1);
+        setActiveProjectId(targetProject.id);
+        setReferences(targetProject.references || []);
+        setProductInfo(targetProject.productInfo || "");
+        setStyleRequest(targetProject.styleRequest || "");
+        setPlatform(targetProject.platform || "淘宝");
+        setScreenCount(targetProject.screenCount || DEFAULT_SCREEN_COUNT);
+        setPlan(targetProject.plan || null);
+        setScreens(targetProject.screens || []);
+        setCurrentIndex(targetProject.currentIndex || 1);
         setFeedback("");
         window.setTimeout(() => setProjectReady(true), 0);
     };
 
     const deleteProject = (id: string) => {
-        const next = projects.filter((project) => project.id !== id);
+        const next = mergeActiveProjectState(projects).filter((project) => project.id !== id);
         setProjects(next);
         void persistProjects(next);
-        if (activeProjectId === id) closeProjectList();
+        if (activeProjectId === id) {
+            setActiveProjectId(null);
+            setProjectReady(false);
+            if (routeProjectId) router.push("/detail");
+        }
     };
 
     const loadLlmKeys = () => {
@@ -1485,34 +1520,8 @@ async function hydrateProjectImages(project: DetailProject): Promise<DetailProje
     return { ...project, references, screens };
 }
 
-async function readStoredProjects() {
-    const stored = await detailProjectStore.getItem<DetailProject[]>(DETAIL_PROJECTS_KEY);
-    if (Array.isArray(stored)) return stored;
-    const legacy = JSON.parse(localStorage.getItem(DETAIL_PROJECTS_KEY) || "[]") as DetailProject[];
-    if (Array.isArray(legacy) && legacy.length) await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeProjects(legacy));
-    return Array.isArray(legacy) ? legacy : [];
-}
-
-function serializeProjects(items: DetailProject[]) {
-    return items.map((project) => ({
-        ...project,
-        references: (project.references || []).map((reference) => ({
-            ...reference,
-            url: reference.storageKey ? reference.remoteUrl || "" : stableImageValue(reference.url),
-            dataUrl: reference.storageKey ? "" : stableImageValue(reference.dataUrl),
-            uploadStatus: reference.uploadStatus === "uploading" ? "failed" : reference.uploadStatus,
-        })),
-        screens: (project.screens || []).map((screen) => ({
-            ...screen,
-            imageUrl: screen.storageKey ? "" : stableImageValue(screen.imageUrl),
-            status: screen.status === "generating" ? "failed" : screen.status,
-            error: screen.status === "generating" ? "上次生成中断，请重新生成" : screen.error,
-        })),
-    }));
-}
-
-function stableImageValue(value?: string) {
-    return value?.startsWith("blob:") ? "" : value;
+async function readStoredProjects(): Promise<DetailProject[]> {
+    return readStoredDetailProjects<DetailProject>();
 }
 
 function moveItem<T>(items: T[], from: number, to: number) {
