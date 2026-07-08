@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, WheelEvent } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { App, Button, Input, InputNumber, Modal, Select, Space, Tag } from "antd";
 import { ChevronDown, ChevronLeft, ChevronRight, Download, Eye, LoaderCircle, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
+import localforage from "localforage";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
@@ -45,6 +47,7 @@ type DetailScreen = DetailPlanScreen & {
 
 type DetailLlmKeys = Record<string, string>;
 type DetailGenerationMode = "precise" | "rough";
+type DetailGenerationResult = { success: number; failed: number; stoppedAt?: number };
 
 type DetailProject = {
     id: string;
@@ -64,10 +67,13 @@ type DetailProject = {
 const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
 const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 const DEFAULT_SCREEN_COUNT = 6;
-const SEAM_REFERENCE_RATIO = 0.18;
+const detailProjectStore = localforage.createInstance({ name: "infinite-canvas", storeName: "detail_projects" });
 
 export default function DetailWorkbenchPage() {
     const { message, modal } = App.useApp();
+    const router = useRouter();
+    const params = useParams<{ id?: string | string[] }>();
+    const routeProjectId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] || "" : "";
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -134,15 +140,22 @@ export default function DetailWorkbenchPage() {
     }, [activeProjectId]);
 
     useEffect(() => {
-        const handlePopState = (event: PopStateEvent) => {
-            if (activeProjectIdRef.current && !event.state?.detailWorkbenchProjectId) {
+        if (!routeProjectId) {
+            if (activeProjectIdRef.current) {
                 setActiveProjectId(null);
                 setProjectReady(false);
             }
-        };
-        window.addEventListener("popstate", handlePopState);
-        return () => window.removeEventListener("popstate", handlePopState);
-    }, []);
+            return;
+        }
+        if (!projects.length) return;
+        const project = projects.find((item) => item.id === routeProjectId);
+        if (!project) {
+            message.warning("详情图项目不存在或本地数据已丢失");
+            router.replace("/detail");
+            return;
+        }
+        if (activeProjectIdRef.current !== project.id || !projectReady) openProject(project, { pushHistory: false });
+    }, [message, projectReady, projects, routeProjectId, router]);
 
     useEffect(() => {
         if (!projectReady || !activeProjectId) return;
@@ -172,8 +185,12 @@ export default function DetailWorkbenchPage() {
     const scheduleProjectSave = (items: DetailProject[]) => {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
-            localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(items));
+            void persistProjects(items);
         }, 250);
+    };
+
+    const persistProjects = async (items: DetailProject[]) => {
+        await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeProjects(items));
     };
 
     const loadLlmModels = async () => {
@@ -188,7 +205,7 @@ export default function DetailWorkbenchPage() {
 
     const loadProjects = async () => {
         try {
-            const stored = JSON.parse(localStorage.getItem(DETAIL_PROJECTS_KEY) || "[]") as DetailProject[];
+            const stored = await readStoredProjects();
             const hydrated = await Promise.all(stored.map(hydrateProjectImages));
             setProjects(hydrated);
         } catch {
@@ -228,7 +245,7 @@ export default function DetailWorkbenchPage() {
         project.title = title;
         const next = [project, ...projects];
         setProjects(next);
-        localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
+        void persistProjects(next);
         openProject(project);
     };
 
@@ -243,20 +260,14 @@ export default function DetailWorkbenchPage() {
     };
 
     const pushProjectHistory = (projectId: string) => {
-        const state = window.history.state || {};
-        if (state.detailWorkbenchProjectId === projectId) return;
-        window.history.pushState({ ...state, detailWorkbenchProjectId: projectId }, "", window.location.href);
+        if (routeProjectId === projectId) return;
+        router.push(`/detail/${projectId}`);
     };
 
     const closeProjectList = () => {
         setActiveProjectId(null);
         setProjectReady(false);
-        const state = window.history.state || {};
-        if (state.detailWorkbenchProjectId) {
-            const nextState = { ...state };
-            delete nextState.detailWorkbenchProjectId;
-            window.history.replaceState(nextState, "", window.location.href);
-        }
+        if (routeProjectId) router.push("/detail");
     };
 
     const openProject = (project: DetailProject, options: { pushHistory?: boolean } = {}) => {
@@ -278,7 +289,7 @@ export default function DetailWorkbenchPage() {
     const deleteProject = (id: string) => {
         const next = projects.filter((project) => project.id !== id);
         setProjects(next);
-        localStorage.setItem(DETAIL_PROJECTS_KEY, JSON.stringify(next));
+        void persistProjects(next);
         if (activeProjectId === id) closeProjectList();
     };
 
@@ -410,12 +421,12 @@ export default function DetailWorkbenchPage() {
         setIsRunning(true);
         setFeedback("");
         try {
-            if (mode === "rough") {
-                await generateRoughPlan(plan);
+            const result = mode === "rough" ? await generateRoughPlan(plan) : await generatePrecisePlan(plan);
+            if (result.failed) {
+                message.warning(result.stoppedAt ? `生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续` : `生成完成：成功 ${result.success} 屏，失败 ${result.failed} 屏`);
             } else {
-                await generatePrecisePlan(plan);
+                message.success(`详情图生成完成：成功 ${result.success} 屏`);
             }
-            message.success("详情图生成完成");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "生成失败");
         } finally {
@@ -424,27 +435,43 @@ export default function DetailWorkbenchPage() {
         }
     };
 
-    const generatePrecisePlan = async (sourcePlan: DetailPlan) => {
+    const generatePrecisePlan = async (sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
         let sourceScreens: DetailScreen[] = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        let success = 0;
         setScreens(sourceScreens);
         setCurrentIndex(1);
         for (const screen of sourceScreens) {
             setStatusText(`精细模式：正在生成第 ${screen.index} 屏`);
-            const generated = await generateScreen(screen.index, sourceScreens, sourcePlan, { throwOnError: false });
-            if (generated) sourceScreens = patchScreen(sourceScreens, screen.index, generated);
+            try {
+                const generated = await generateScreen(screen.index, sourceScreens, sourcePlan);
+                sourceScreens = patchScreen(sourceScreens, screen.index, generated);
+                success += 1;
+            } catch {
+                return { success, failed: 1, stoppedAt: screen.index };
+            }
         }
+        return { success, failed: 0 };
     };
 
-    const generateRoughPlan = async (sourcePlan: DetailPlan) => {
-        const sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+    const generateRoughPlan = async (sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
+        let sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        let success = 0;
+        let failed = 0;
         setScreens(sourceScreens);
         setCurrentIndex(1);
         setStatusText("粗糙模式：正在生成第一屏");
         const first = await generateScreen(1, sourceScreens, sourcePlan, { throwOnError: false });
-        if (!first?.imageUrl || !first.storageKey) return;
-        const anchoredScreens = sourceScreens.map((screen) => (screen.index === 1 ? { ...screen, imageUrl: first.imageUrl, storageKey: first.storageKey, status: "ready" as const } : screen));
+        if (first?.imageUrl && first.storageKey) {
+            success += 1;
+            sourceScreens = sourceScreens.map((screen) => (screen.index === 1 ? { ...screen, imageUrl: first.imageUrl, storageKey: first.storageKey, status: "ready" as const } : screen));
+        } else {
+            failed += 1;
+        }
         setStatusText("粗糙模式：正在并发生成其余屏");
-        await Promise.all(sourcePlan.screens.slice(1).map((screen) => generateScreen(screen.index, anchoredScreens, sourcePlan, { mode: "rough", throwOnError: false })));
+        const results = await Promise.all(sourcePlan.screens.slice(1).map((screen) => generateScreen(screen.index, sourceScreens, sourcePlan, { mode: "rough", throwOnError: false })));
+        success += results.filter((result) => result?.imageUrl).length;
+        failed += results.filter((result) => !result?.imageUrl).length;
+        return { success, failed };
     };
 
     const createDetailPlan = async () => {
@@ -628,8 +655,15 @@ export default function DetailWorkbenchPage() {
                 storageKey: first.storageKey,
             });
         }
-        if (options?.mode !== "rough" && previous) {
-            anchors.push(await buildBottomSeamReference(previous));
+        if (previous && previous.storageKey !== first?.storageKey) {
+            anchors.push({
+                id: `screen-${previous.index}-anchor-2`,
+                name: `screen-${previous.index}.png`,
+                type: "image/png",
+                dataUrl: previous.imageUrl,
+                url: previous.imageUrl,
+                storageKey: previous.storageKey,
+            });
         }
         const remainingSlots = Math.max(0, limit - anchors.length);
         const extras = uniqueReferences([...currentReference, ...references]).filter((reference) => !anchors.some((anchor) => anchor.storageKey === reference.storageKey && anchor.id !== reference.id));
@@ -658,6 +692,20 @@ export default function DetailWorkbenchPage() {
         if (!items.length) {
             message.warning("还没有可导出的图片");
             return;
+        }
+        const missing = screens.filter((screen) => !screen.imageUrl).map((screen) => screen.index);
+        if (missing.length) {
+            const confirmed = await new Promise<boolean>((resolve) => {
+                modal.confirm({
+                    title: "是否只导出已生成部分？",
+                    content: `当前第 ${missing.join("、")} 屏还没有生成成功，继续导出会跳过这些屏。`,
+                    okText: "继续导出",
+                    cancelText: "取消",
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                });
+            });
+            if (!confirmed) return;
         }
         try {
             const blob = await composeLongImage(items.map((screen) => screen.imageUrl!));
@@ -1220,7 +1268,7 @@ ${input.referenceSummaries}
 2. 屏数：${input.screenCount}
 3. 不展示方案给用户，但系统会保存你的 JSON，用于逐屏生成。
 4. 第一屏必须是整套详情页风格基调。
-5. 后续每一屏都会默认参考第一屏完整图和上一屏底部衔接条，所以提示词要强调风格继承、边缘衔接，但不要让下一屏复制上一屏底部的具体物体或局部画面。
+5. 后续每一屏都会默认参考第一屏完整图和上一屏完整图，所以提示词要强调风格继承、颜色图案连贯、视觉节奏延续，但不要复制上一屏具体内容。
 6. 不要虚构用户未提供的认证、销量、功效、专利、检测报告、排名、医师推荐等信息。
 7. 图片内中文文字要少而准，参数类信息只能使用用户提供的真实内容。
 8. 每屏都是完整竖版详情页模块，不是短海报放在空白长画布中间。
@@ -1267,23 +1315,24 @@ ${content}
 }
 
 function buildImagePrompt(plan: DetailPlan, screen: DetailPlanScreen, index: number, mode: DetailGenerationMode, includeCurrent: boolean) {
+    const isLast = index >= plan.screens.length;
     const referenceGuide =
         index === 1
-            ? "这是整套详情页的第一屏。参考图主要来自用户上传的商品图/竞品图，请准确保持产品外观、材质、结构和白灰科技感，并建立整套长图的视觉基调。"
+            ? "这是整套详情页的第一屏。参考图主要来自用户上传的商品图/竞品图，请准确保持产品外观、材质、结构和用户要求的视觉质感，并建立整套长图的视觉基调。"
             : mode === "rough"
-              ? "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调。当前屏请以图一保持产品质感、色调、光影、字体氛围和高级感，但不要复制第一屏版式或首屏大标题结构。"
-              : "参考图片顺序：图一 = 系统参考图片编号中的图片1，也就是第一屏生成图，是全局风格基调；图二 = 系统参考图片编号中的图片2，也就是上一屏底部衔接条，不是上一屏完整图。图二只用于学习上一屏最底部边缘的平均颜色、亮度、柔和光影、雾化感和背景方向，不要复制图二里的任何具体物体或局部画面。";
+              ? "参考图片顺序：图一 = 第一屏完整图，用来确定整套详情图风格、色调、字体、商品质感和版式语言。如果提供了图二，图二 = 上一张完整详情图，用来保持拼接时颜色、图案、背景走势、光影和视觉节奏连贯。"
+              : "参考图片顺序：图一 = 第一屏完整图，用来确定整套详情图风格、色调、字体、商品质感和版式语言；图二 = 上一张完整详情图，是多图拼接长图的一部分，请继续生成下一张完整详情图模块，并保持拼接时颜色、图案、背景走势、光影和视觉节奏连贯。";
     const currentGuide = !includeCurrent
         ? ""
         : index === 1
           ? "如果还提供了当前屏修改前的旧图，它只用于理解第一屏原本内容，请根据用户要求局部调整，不要照搬旧图。"
           : mode === "rough"
-            ? "如果还提供了图二，它对应系统参考图片编号中的图片2，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图二改变图一的风格优先级。"
-            : "如果还提供了图三，它对应系统参考图片编号中的图片3，是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图三改变图一和图二的优先级。";
+            ? "如果还提供了当前屏修改前的旧图，它只用于理解本屏原本内容，不要让旧图改变第一屏和上一屏的参考优先级。"
+            : "如果还提供了图三，它是当前屏修改前的旧图，只用于理解本屏原本内容，不要让图三改变图一和图二的优先级。";
     const continuity =
         index === 1
-            ? "第一屏底部也要为下一屏预留可衔接区域，避免主体、标题、图标或复杂纹理贴近底边。"
-            : "当前屏是完整详情页长图中的后续内容屏，不是第一屏，不是主视觉海报。请根据图一统一风格，根据图二处理顶部边缘衔接，但不要把上一屏下半段接到本屏顶部。";
+            ? "第一屏底部保持自然、干净、可延展，为后续详情图继续往下拼接留下空间。"
+            : "当前屏是完整详情页长图中的后续内容屏，不是第一屏，不是主视觉海报。请根据图一统一整体风格，根据图二继续往下生成，但不要把图二直接贴到当前图顶部，也不要复制图二里的具体主体、标题、图标或局部画面。";
     return `
 ${screen.prompt}
 
@@ -1296,14 +1345,13 @@ ${currentGuide}
 
 衔接要求：
 ${continuity}
-1. 当前屏顶部 20%-25% 是无主体衔接安全区，只能是低复杂度、可延展、柔和的浅色背景。
-2. 顶部安全区禁止出现主体产品、包装、宠物、食盆、食物、零件、重要标题、参数文字、图标组、LOGO、边框、裁切物体或复杂结构。
-3. 不要复制、重画、拼接图二中的任何可识别内容；图二只作为边缘色彩和光影样本。
-4. 过渡区域不需要全纯色，可以使用低复杂度的浅灰白背景、柔和气流、轻雾、淡光影、简单曲线或非常简洁的纹理，但不要出现难以对接的复杂图案、硬边框、强分割线、页面框线。
-5. 当前屏底部 15%-18% 也要为下一屏预留自然衔接区域，保持低复杂度、可延展、无重要内容。
-6. 主体产品、宠物、爆炸结构、卖点图标和主要文字都放在中间区域，避免贴近上下边缘。
-7. 第二屏以后的内容屏不要重复第一屏的首屏大标题、主视觉封面结构或整屏包装海报构图。
-8. 保持商品外观、结构、颜色、包装和品牌视觉特征一致。
+1. 生成一张新的完整竖版详情页模块，不要生成拼贴图、九宫格、分镜草图或半截页面。
+2. 顶部要自然承接上一张的颜色、图案、背景走势、光影和视觉节奏，但不要刻意做大面积空白、雾化条、硬渐变条或明显分割线。
+3. 不要复制、重画、拼接图二中的可识别主体、标题、图标、产品局部或具体排版；图二只用于延续整体走向和拼接感觉。
+4. 主要商品、卖点标题、图标组和参数文字放在画面主体区域，避免紧贴最上边缘或最下边缘。
+5. 第二屏以后的内容屏不要重复第一屏的首屏大标题、主视觉封面结构或整屏包装海报构图。
+6. 保持商品外观、结构、颜色、包装和品牌视觉特征一致。
+${isLast ? "7. 这是最后一屏，请自然收尾，不需要再为下一屏预留明显衔接区域。" : "7. 底部保持自然可延展，方便下一张继续拼接，但不要空出突兀的大块留白。"}
 `.trim();
 }
 
@@ -1361,6 +1409,36 @@ async function hydrateProjectImages(project: DetailProject): Promise<DetailProje
         ),
     );
     return { ...project, references, screens };
+}
+
+async function readStoredProjects() {
+    const stored = await detailProjectStore.getItem<DetailProject[]>(DETAIL_PROJECTS_KEY);
+    if (Array.isArray(stored)) return stored;
+    const legacy = JSON.parse(localStorage.getItem(DETAIL_PROJECTS_KEY) || "[]") as DetailProject[];
+    if (Array.isArray(legacy) && legacy.length) await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeProjects(legacy));
+    return Array.isArray(legacy) ? legacy : [];
+}
+
+function serializeProjects(items: DetailProject[]) {
+    return items.map((project) => ({
+        ...project,
+        references: (project.references || []).map((reference) => ({
+            ...reference,
+            url: reference.storageKey ? reference.remoteUrl || "" : stableImageValue(reference.url),
+            dataUrl: reference.storageKey ? "" : stableImageValue(reference.dataUrl),
+            uploadStatus: reference.uploadStatus === "uploading" ? "failed" : reference.uploadStatus,
+        })),
+        screens: (project.screens || []).map((screen) => ({
+            ...screen,
+            imageUrl: screen.storageKey ? "" : stableImageValue(screen.imageUrl),
+            status: screen.status === "generating" ? "failed" : screen.status,
+            error: screen.status === "generating" ? "上次生成中断，请重新生成" : screen.error,
+        })),
+    }));
+}
+
+function stableImageValue(value?: string) {
+    return value?.startsWith("blob:") ? "" : value;
 }
 
 function moveItem<T>(items: T[], from: number, to: number) {
@@ -1450,49 +1528,6 @@ function screenStatusLabel(status: DetailScreen["status"]) {
     if (status === "ready") return "已生成";
     if (status === "failed") return "失败";
     return "未生成";
-}
-
-async function buildBottomSeamReference(screen: DetailScreen & { imageUrl: string; storageKey: string }): Promise<DetailReference> {
-    const sourceDataUrl = await imageToDataUrl({ url: screen.imageUrl, storageKey: screen.storageKey });
-    const seamDataUrl = await createBottomSeamDataUrl(sourceDataUrl);
-    return {
-        id: `screen-${screen.index}-bottom-seam`,
-        name: `screen-${screen.index}-bottom-seam.png`,
-        type: "image/png",
-        dataUrl: seamDataUrl,
-        url: seamDataUrl,
-        storageKey: `seam:${screen.storageKey}`,
-    };
-}
-
-async function createBottomSeamDataUrl(url: string) {
-    const image = await loadImage(url);
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    const seamHeight = Math.max(80, Math.round(height * SEAM_REFERENCE_RATIO));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器不支持衔接参考图处理");
-
-    context.fillStyle = "#f6f7ef";
-    context.fillRect(0, 0, width, height);
-
-    const blurPadding = Math.round(seamHeight * 0.16);
-    context.save();
-    context.filter = `blur(${Math.max(8, Math.round(seamHeight * 0.04))}px)`;
-    context.drawImage(image, 0, height - seamHeight, width, seamHeight, -blurPadding, -blurPadding, width + blurPadding * 2, seamHeight + blurPadding * 2);
-    context.restore();
-
-    const fade = context.createLinearGradient(0, 0, 0, Math.round(seamHeight * 1.9));
-    fade.addColorStop(0, "rgba(246, 247, 239, 0.08)");
-    fade.addColorStop(0.5, "rgba(246, 247, 239, 0.32)");
-    fade.addColorStop(1, "rgba(246, 247, 239, 0.92)");
-    context.fillStyle = fade;
-    context.fillRect(0, 0, width, Math.round(seamHeight * 1.9));
-
-    return canvas.toDataURL("image/png");
 }
 
 async function composeLongImage(urls: string[]) {
