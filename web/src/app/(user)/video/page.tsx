@@ -3,10 +3,10 @@
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, LinkOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { App, Button, Card, Empty, Input, Radio, Segmented, Slider, Space, Tag, Typography, Upload } from "antd";
 import { Clock3, Film, Image as ImageIcon, Music2, Video } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { VIDEO_QUALITY_OPTIONS } from "@/constant/video-model-options";
-import { requestVideoGeneration, type VideoReferenceMaterial } from "@/services/api/video";
+import { createVideoGenerationTask, waitForVideoTaskResult, type VideoReferenceMaterial } from "@/services/api/video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { uploadReferenceBlobToImageBed, uploadReferenceImage } from "@/services/image-bed";
 import { useConfigStore, useEffectiveConfig, videoCapabilitiesForModel } from "@/stores/use-config-store";
@@ -20,7 +20,19 @@ type VideoHistoryItem = {
     createdAt: number;
 };
 
+type VideoPendingTask = {
+    id: string;
+    taskId: string;
+    prompt: string;
+    model: string;
+    ratio: string;
+    quality: string;
+    duration: number;
+    createdAt: number;
+};
+
 const VIDEO_HISTORY_KEY = "zmo-video-workbench-history-v1";
+const VIDEO_PENDING_KEY = "zmo-video-workbench-pending-task-v1";
 
 export default function VideoPage() {
     const { message } = App.useApp();
@@ -40,6 +52,8 @@ export default function VideoPage() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [resultUrl, setResultUrl] = useState("");
     const [history, setHistory] = useState<VideoHistoryItem[]>([]);
+    const [pendingTask, setPendingTask] = useState<VideoPendingTask | null>(null);
+    const recoveringRef = useRef(false);
 
     const videoModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "video"), [config.modelTypes, config.models]);
     const hasReferenceInputs = capabilities.referenceImageLimit > 0 || capabilities.referenceVideoLimit > 0 || capabilities.referenceAudioLimit > 0;
@@ -136,6 +150,47 @@ export default function VideoPage() {
         message.success(`参考${type === "video" ? "视频" : "音频"}已上传`);
     };
 
+    const finishVideoTask = useCallback(
+        async (task: VideoPendingTask, showPreview = true) => {
+            const runtimeConfig = { ...config, model: task.model, videoModel: task.model, size: task.ratio, vquality: task.quality, videoSeconds: String(task.duration) };
+            const blob = await waitForVideoTaskResult(runtimeConfig, task.taskId, task.model);
+            const stored = await uploadMediaFile(blob, "video-workbench");
+            const item: VideoHistoryItem = { id: newID(), prompt: task.prompt, url: stored.url, storageKey: stored.storageKey, createdAt: Date.now() };
+            if (showPreview) setResultUrl(stored.url);
+            setHistory((current) => {
+                const next = [item, ...current].slice(0, 30);
+                writeVideoHistory(next);
+                return next;
+            });
+            clearPendingTask();
+            setPendingTask(null);
+            message.success("视频生成完成");
+        },
+        [config, message],
+    );
+
+    useEffect(() => {
+        if (recoveringRef.current) return;
+        const task = readPendingTask();
+        if (!task?.taskId) return;
+        recoveringRef.current = true;
+        setPendingTask(task);
+        setSelectedModel(task.model);
+        setRatio(task.ratio);
+        setQuality(task.quality);
+        setDuration(task.duration);
+        setPrompt(task.prompt);
+        setIsGenerating(true);
+        void finishVideoTask(task, false)
+            .catch((error) => {
+                message.warning(error instanceof Error ? `视频任务恢复失败：${error.message}` : "视频任务恢复失败");
+            })
+            .finally(() => {
+                setIsGenerating(false);
+                recoveringRef.current = false;
+            });
+    }, [finishVideoTask, message]);
+
     const handleGenerate = async () => {
         if (!selectedModel) {
             message.warning("请选择视频模型");
@@ -152,16 +207,11 @@ export default function VideoPage() {
         setIsGenerating(true);
         try {
             const runtimeConfig = { ...config, model: selectedModel, videoModel: selectedModel, size: ratio, vquality: quality, videoSeconds: String(duration) };
-            const blob = await requestVideoGeneration(runtimeConfig, prompt.trim(), imageReferences, mediaReferences);
-            const stored = await uploadMediaFile(blob, "video-workbench");
-            const item: VideoHistoryItem = { id: newID(), prompt: prompt.trim(), url: stored.url, storageKey: stored.storageKey, createdAt: Date.now() };
-            setResultUrl(stored.url);
-            setHistory((current) => {
-                const next = [item, ...current].slice(0, 30);
-                writeVideoHistory(next);
-                return next;
-            });
-            message.success("视频生成完成");
+            const created = await createVideoGenerationTask(runtimeConfig, prompt.trim(), imageReferences, mediaReferences);
+            const task: VideoPendingTask = { id: newID(), taskId: created.taskId, prompt: prompt.trim(), model: selectedModel, ratio, quality, duration, createdAt: Date.now() };
+            setPendingTask(task);
+            writePendingTask(task);
+            await finishVideoTask(task);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "生成失败");
         } finally {
@@ -262,6 +312,8 @@ export default function VideoPage() {
                                     下载视频
                                 </Button>
                             </div>
+                        ) : isGenerating ? (
+                            <Empty image={<Video className="mx-auto size-16 text-stone-300 dark:text-stone-700" />} description={pendingTask?.taskId ? `正在生成视频，任务 ${shortTaskId(pendingTask.taskId)} 可断线恢复` : "正在创建视频任务"} />
                         ) : (
                             <Empty image={<Video className="mx-auto size-16 text-stone-300 dark:text-stone-700" />} description="生成结果会显示在这里" />
                         )}
@@ -417,4 +469,28 @@ function readVideoHistory(): VideoHistoryItem[] {
 function writeVideoHistory(items: VideoHistoryItem[]) {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(items.map((item) => ({ ...item, url: "" }))));
+}
+
+function readPendingTask(): VideoPendingTask | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const task = JSON.parse(window.localStorage.getItem(VIDEO_PENDING_KEY) || "null") as VideoPendingTask | null;
+        return task?.taskId && task.model ? task : null;
+    } catch {
+        return null;
+    }
+}
+
+function writePendingTask(task: VideoPendingTask) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VIDEO_PENDING_KEY, JSON.stringify(task));
+}
+
+function clearPendingTask() {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(VIDEO_PENDING_KEY);
+}
+
+function shortTaskId(taskId: string) {
+    return taskId.length > 18 ? `${taskId.slice(0, 10)}...${taskId.slice(-6)}` : taskId;
 }

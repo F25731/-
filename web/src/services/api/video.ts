@@ -21,11 +21,16 @@ type VideoResponse = {
     output?: string[];
     video?: { url?: string };
     error?: { message?: string; code?: string };
-    metadata?: { url?: string };
+    metadata?: { url?: string; video_url?: string };
 };
 
 type ImageVideoResponse = { created?: number; data?: Array<{ url?: string; b64_json?: string }> };
 type ApiVideoResponse = VideoResponse | ImageVideoResponse | { code?: number; data?: VideoResponse | ImageVideoResponse | null; msg?: string };
+
+export type VideoGenerationTask = {
+    taskId: string;
+    model: string;
+};
 
 type VideoRequestBody = {
     model: string;
@@ -43,21 +48,21 @@ type VideoRequestBody = {
     metadata?: Record<string, unknown>;
 };
 
-function aiApiUrl(config: AiConfig, path: string) {
+function aiApiUrl(config: AiConfig, path: string, displayModel?: string) {
     if (config.channelMode === "remote") return `/api/v1${path}`;
-    const runtime = resolveModelRuntimeConfig(config, videoRuntimeModelName(config));
+    const runtime = resolveModelRuntimeConfig(config, videoRuntimeModelName(config, displayModel));
     return buildApiUrl(runtime.baseUrl || config.baseUrl, path);
 }
 
-function aiHeaders(config: AiConfig) {
+function aiHeaders(config: AiConfig, displayModel?: string) {
     const token = useUserStore.getState().token;
-    const runtime = config.channelMode === "remote" ? { apiKey: config.apiKey } : resolveModelRuntimeConfig(config, videoRuntimeModelName(config));
+    const runtime = config.channelMode === "remote" ? { apiKey: config.apiKey } : resolveModelRuntimeConfig(config, videoRuntimeModelName(config, displayModel));
     const authToken = config.channelMode === "remote" ? token : runtime.apiKey || config.apiKey || token;
     return authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
 }
 
-function videoRuntimeModelName(config: AiConfig) {
-    return config.videoModel || config.model;
+function videoRuntimeModelName(config: AiConfig, displayModel?: string) {
+    return displayModel || config.videoModel || config.model;
 }
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mediaReferences: VideoReferenceMaterial[] = []) {
@@ -89,6 +94,49 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         return content.data;
     } catch (error) {
         throw new Error(readAxiosError(error, "视频生成失败"));
+    }
+}
+
+export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mediaReferences: VideoReferenceMaterial[] = []): Promise<VideoGenerationTask> {
+    const displayModel = videoRuntimeModelName(config);
+    const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
+    const body = await buildVideoRequestBody(config, displayModel, model, prompt, references, mediaReferences);
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos", displayModel), body, { headers: aiHeaders(config, displayModel) })).data);
+        const taskId = created.id || created.task_id;
+        if (!taskId) throw new Error("视频接口没有返回任务 ID");
+        return { taskId, model: displayModel };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "视频任务创建失败"));
+    }
+}
+
+export async function waitForVideoTaskResult(config: AiConfig, taskId: string, displayModel?: string) {
+    const modelName = videoRuntimeModelName(config, displayModel);
+    const model = config.channelMode === "remote" ? modelName : resolveModelRuntimeConfig(config, modelName).modelId || modelName;
+    try {
+        let resultUrl = "";
+        for (;;) {
+            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${taskId}`, modelName), { headers: aiHeaders(config, modelName), params: config.channelMode === "remote" ? { model } : undefined })).data);
+            resultUrl = extractVideoUrl(video) || resultUrl;
+            if (isVideoTaskCompleted(video.status) || resultUrl) break;
+            if (isVideoTaskFailed(video.status)) throw new Error(video.error?.message || "视频生成失败");
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
+        if (resultUrl) {
+            try {
+                return await fetchVideoResultBlob(resultUrl);
+            } catch {
+                // Some NewAPI task URLs require Authorization; fall back to the authenticated content endpoint.
+            }
+        }
+
+        const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${taskId}/content`, modelName), { headers: aiHeaders(config, modelName), params: config.channelMode === "remote" ? { model } : undefined, responseType: "blob" });
+        const contentUrl = await extractVideoBlobUrl(content.data);
+        if (contentUrl) return fetchVideoResultBlob(contentUrl);
+        return content.data;
+    } catch (error) {
+        throw new Error(readAxiosError(error, "视频任务恢复失败"));
     }
 }
 
@@ -231,7 +279,7 @@ function isVideoTaskFailed(status = "") {
 }
 
 function extractVideoUrl(video: VideoResponse) {
-    return [video.url, video.video?.url, video.video_url, video.result_url, video.metadata?.url, ...(video.output || [])].find((url) => /^https?:\/\//i.test(String(url || ""))) || "";
+    return [video.url, video.video?.url, video.video_url, video.result_url, video.metadata?.url, video.metadata?.video_url, ...(video.output || [])].find((url) => /^https?:\/\//i.test(String(url || ""))) || "";
 }
 
 function extractImageVideoUrl(payload: ApiVideoResponse) {
