@@ -284,3 +284,7 @@ export async function deleteAdminModel(token: string, id: string) {
 export async function fetchPublicModels() {
     return apiGet<AdminModel[]>("/api/models");
 }
+
+export async function detectAggregateModels(baseUrl: string, apiKey: string) {
+    return apiPost<string[]>("/api/aggregate-models", { baseUrl, apiKey });
+}

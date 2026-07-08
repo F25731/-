@@ -30,7 +30,18 @@ export type StoredUserModel = {
     enabled: boolean;
 };
 
+export type UserModelConfigMode = "single" | "aggregate";
+
+export type StoredAggregateModelConfig = {
+    baseUrl?: string;
+    apiKey?: string;
+    availableModelIds?: string[];
+    checkedAt?: number;
+};
+
 type StoredUserModelConfig = {
+    mode?: UserModelConfigMode;
+    aggregate?: StoredAggregateModelConfig;
     modelIds?: string[];
     apiKeys?: Record<string, string>;
     models?: StoredUserModel[];
@@ -107,7 +118,7 @@ type ConfigStore = {
 function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSettings["modelChannel"] | null): AiConfig {
     const userModelConfig = readUserModelConfig();
     if (userModelConfig.models.length > 0) {
-        const configuredModels = userModelConfig.models.filter((model) => Boolean(userModelConfig.apiKeys[model.id]?.trim()));
+        const configuredModels = userModelConfig.models;
         const imageModels = configuredModels.filter((model) => model.type === "image").map((model) => model.name);
         const videoModels = configuredModels.filter((model) => model.type === "video").map((model) => model.name);
         const parseModels = configuredModels.filter((model) => model.type === "parse").map((model) => model.name);
@@ -124,8 +135,9 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         const parseModel = parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
         const promptModel = promptModels.includes(config.promptModel) ? config.promptModel : promptModels[0] || "";
         const model = models.includes(config.model) ? config.model : imageModel || videoModel || parseModel || promptModel || "";
+        const nextImageTier = normalizeImageTierForOptions(config.imageTier, modelTierOptions[imageModel || model], modelDefaultTiers[imageModel || model]);
         const size = normalizeModelSize(config.size, modelSupportedSizes[imageModel || model]);
-        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel, promptModel, imageTier: config.imageTier, size });
+        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel, promptModel, imageTier: nextImageTier, size });
         return {
             ...config,
             channelMode: "local",
@@ -136,6 +148,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             videoModel,
             parseModel,
             promptModel,
+            imageTier: nextImageTier,
             textModel: models.includes(config.textModel) ? config.textModel : model,
             size,
             models,
@@ -237,14 +250,24 @@ function readAuthToken(tier?: ImageKeyTier) {
 }
 
 export function readUserModelConfig() {
-    if (typeof window === "undefined") return { models: [], apiKeys: {} as Record<string, string> };
+    if (typeof window === "undefined") return { mode: "single" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
     try {
         const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
+        const mode: UserModelConfigMode = parsed.mode === "aggregate" ? "aggregate" : "single";
         const selectedIds = new Set(parsed.modelIds || []);
-        const models = (parsed.models || []).filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
-        return { models, apiKeys: parsed.apiKeys || {} };
+        const sourceModels = (parsed.models || []).filter((model) => model.type !== "prompt" && model.type !== "detail_prompt" && model.enabled && model.name && model.apiUrl && (!selectedIds.size || selectedIds.has(model.id)));
+        const apiKeys = parsed.apiKeys || {};
+        const aggregate = normalizeAggregateConfig(parsed.aggregate);
+        const models =
+            mode === "aggregate"
+                ? sourceModels.flatMap((model) => {
+                      const next = filterAggregateModel(model, aggregate.availableModelIds || []);
+                      return next ? [next] : [];
+                  })
+                : sourceModels.filter((model) => Boolean(apiKeys[model.id]?.trim()));
+        return { mode, models, apiKeys, aggregate };
     } catch {
-        return { models: [], apiKeys: {} as Record<string, string> };
+        return { mode: "single" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
     }
 }
 
@@ -252,6 +275,7 @@ export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.m
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
+    if (userModelConfig.mode === "aggregate") return { baseUrl: userModelConfig.aggregate.baseUrl || model.apiUrl, apiKey: userModelConfig.aggregate.apiKey || "", modelId: resolveRuntimeModelId(model, config.imageTier) };
     return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim(), modelId: resolveRuntimeModelId(model, config.imageTier) };
 }
 
@@ -395,6 +419,31 @@ export function imageReferenceLimit(config: AiConfig, modelName = config.model |
     return normalizeReferenceLimit(config.modelReferenceLimits[modelName]);
 }
 
+function normalizeAggregateConfig(value?: StoredAggregateModelConfig): StoredAggregateModelConfig {
+    return {
+        baseUrl: normalizeBaseUrl(value?.baseUrl || ""),
+        apiKey: String(value?.apiKey || "").trim(),
+        availableModelIds: Array.from(new Set((value?.availableModelIds || []).map((item) => String(item || "").trim()).filter(Boolean))),
+        checkedAt: value?.checkedAt,
+    };
+}
+
+function filterAggregateModel(model: StoredUserModel, availableModelIds: string[]) {
+    const available = new Set(availableModelIds.map((item) => item.trim()).filter(Boolean));
+    if (!available.size) return null;
+    if (model.type === "image") {
+        const tierModels = Object.fromEntries(Object.entries(model.tierModels || {}).filter(([, modelId]) => available.has(String(modelId || "").trim())));
+        if (!Object.keys(tierModels).length) return null;
+        return { ...model, tierModels, defaultTier: normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => tierModels[tier])) };
+    }
+    const modelId = (model.modelId || model.name).trim();
+    return modelId && available.has(modelId) ? model : null;
+}
+
+function normalizeBaseUrl(value: string) {
+    return value.trim().replace(/\/+$/, "");
+}
+
 export function videoCapabilitiesForModel(config: AiConfig, modelName = config.videoModel || config.model) {
     return normalizeVideoCapabilities(config.modelVideoCapabilities?.[modelName]);
 }
@@ -409,6 +458,11 @@ function normalizeDefaultModelTier(defaultTier: string | undefined, tiers: reado
     if (tiers.includes(value)) return value;
     if (tiers.includes("1k")) return "1k";
     return tiers[0] || "1k";
+}
+
+function normalizeImageTierForOptions(tier: string, tiers: string[] | undefined, defaultTier: string | undefined): ImageKeyTier {
+    const options = tiers?.length ? tiers : [...IMAGE_MODEL_TIERS];
+    return (options.includes(tier) ? tier : normalizeDefaultModelTier(defaultTier, options)) as ImageKeyTier;
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {
