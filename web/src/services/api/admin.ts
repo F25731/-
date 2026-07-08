@@ -211,6 +211,11 @@ export type AdminPrivateSettings = {
         apiKey: string;
         hasApiKey?: boolean;
     };
+    balance: {
+        apiUrl: string;
+        secret: string;
+        hasSecret?: boolean;
+    };
 };
 
 export type AdminSettings = {
@@ -287,4 +292,8 @@ export async function fetchPublicModels() {
 
 export async function detectAggregateModels(baseUrls: string[], apiKey: string) {
     return apiPost<Record<string, string[]>>("/api/aggregate-models", { baseUrls, apiKey });
+}
+
+export async function fetchTokenModels(token: string, apiKey: string) {
+    return apiPost<string[]>("/api/admin/models/fetch", { apiKey }, token);
 }

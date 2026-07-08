@@ -1,16 +1,18 @@
 "use client";
 
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from "@ant-design/icons";
-import { App, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, AutoComplete, Button, Card, Flex, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { IMAGE_ASPECT_OPTIONS, IMAGE_MODEL_TIERS, IMAGE_MODEL_TIER_LABELS } from "@/constant/image-model-options";
 import { DEFAULT_VIDEO_CAPABILITIES, VIDEO_DURATION_OPTIONS, VIDEO_QUALITY_OPTIONS, VIDEO_RATIO_OPTIONS, normalizeVideoCapabilities } from "@/constant/video-model-options";
-import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
+import { createAdminModel, deleteAdminModel, fetchAdminModels, fetchAdminSettings, fetchTokenModels, saveAdminSettings, updateAdminModel, type AdminModel, type AdminSettings } from "@/services/api/admin";
+import { DEFAULT_POOL_API_BASE_URL } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 type ModelType = "image" | "video" | "parse" | "prompt" | "detail_prompt";
 type ImageBedFormValues = { uploadUrl: string; apiKey: string };
+type BalanceFormValues = { apiUrl: string; secret: string };
 
 const modelTypeLabels: Record<ModelType, string> = {
     image: "图片分组",
@@ -29,6 +31,7 @@ const modelTypeColors: Record<ModelType, string> = {
 };
 
 const aspectOptions = IMAGE_ASPECT_OPTIONS.map((item) => ({ label: `${item.label} ${item.description}`, value: item.value }));
+const FIXED_MODEL_API_URL = `${DEFAULT_POOL_API_BASE_URL}/v1`;
 
 function isVisualGenerationType(type: ModelType) {
     return type === "image" || type === "video";
@@ -47,8 +50,12 @@ export default function ModelsPage() {
     const [settings, setSettings] = useState<AdminSettings | null>(null);
     const [isSettingsLoading, setIsSettingsLoading] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [modelFetchKey, setModelFetchKey] = useState("");
+    const [fetchedModelIds, setFetchedModelIds] = useState<string[]>([]);
+    const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [form] = Form.useForm<AdminModel>();
     const [imageBedForm] = Form.useForm<ImageBedFormValues>();
+    const [balanceForm] = Form.useForm<BalanceFormValues>();
     const currentType = Form.useWatch("type", form) || "image";
 
     useEffect(() => {
@@ -78,6 +85,10 @@ export default function ModelsPage() {
             imageBedForm.setFieldsValue({
                 uploadUrl: data.private.imageBed?.uploadUrl || "https://tc.zmoapi.cn/api/upload",
                 apiKey: "",
+            });
+            balanceForm.setFieldsValue({
+                apiUrl: data.private.balance?.apiUrl || "",
+                secret: "",
             });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载图床配置失败");
@@ -116,19 +127,68 @@ export default function ModelsPage() {
     const openModal = (model: AdminModel | null) => {
         setEditingModel(model);
         setIsModalOpen(true);
+        setModelFetchKey("");
+        setFetchedModelIds([]);
         if (model) {
             const videoCapabilities = normalizeVideoCapabilities(model.videoCapabilities || { ratios: model.supportedSizes, referenceImageLimit: model.referenceLimit });
-            form.setFieldsValue({ ...model, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, videoCapabilities, isDefault: Boolean(model.isDefault) });
+            form.setFieldsValue({ ...model, apiUrl: model.apiUrl || FIXED_MODEL_API_URL, apiKey: "", tierModels: model.tierModels || {}, defaultTier: model.defaultTier || firstConfiguredTier(model.tierModels), supportedSizes: model.supportedSizes?.length ? model.supportedSizes : defaultSupportedSizes(model.type), referenceLimit: model.referenceLimit || 4, videoCapabilities, isDefault: Boolean(model.isDefault) });
         } else {
             form.resetFields();
-            form.setFieldsValue({ enabled: true, type: "image", apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, videoCapabilities: DEFAULT_VIDEO_CAPABILITIES, isDefault: false });
+            form.setFieldsValue({ enabled: true, type: "image", apiUrl: FIXED_MODEL_API_URL, apiKey: "", tierModels: {}, defaultTier: "1k", supportedSizes: ["auto", "1:1"], referenceLimit: 4, videoCapabilities: DEFAULT_VIDEO_CAPABILITIES, isDefault: false });
+        }
+    };
+
+    const saveBalanceSettings = async () => {
+        if (!token || !settings) return;
+        try {
+            const values = await balanceForm.validateFields();
+            const nextSettings: AdminSettings = {
+                ...settings,
+                private: {
+                    ...settings.private,
+                    balance: {
+                        ...settings.private.balance,
+                        apiUrl: values.apiUrl.trim(),
+                        secret: values.secret.trim(),
+                    },
+                },
+            };
+            const saved = await saveAdminSettings(token, nextSettings);
+            setSettings(saved);
+            balanceForm.setFieldsValue({
+                apiUrl: saved.private.balance?.apiUrl || values.apiUrl.trim(),
+                secret: "",
+            });
+            message.success("余额接口配置已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存余额接口配置失败");
         }
     };
 
     const closeModal = () => {
         setIsModalOpen(false);
         setEditingModel(null);
+        setModelFetchKey("");
+        setFetchedModelIds([]);
         form.resetFields();
+    };
+
+    const loadUpstreamModels = async () => {
+        const key = modelFetchKey.trim();
+        if (!key) {
+            message.warning("请先填写用于获取模型的 API Key");
+            return;
+        }
+        setIsFetchingModels(true);
+        try {
+            const ids = Array.from(new Set((await fetchTokenModels(token!, key)).map((item) => item.trim()).filter(Boolean)));
+            setFetchedModelIds(ids);
+            message.success(`获取到 ${ids.length} 个模型`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "获取模型失败");
+        } finally {
+            setIsFetchingModels(false);
+        }
     };
 
     const saveModel = async () => {
@@ -225,6 +285,39 @@ export default function ModelsPage() {
                     </Flex>
                 </Card>
 
+                <Card variant="borderless" loading={isSettingsLoading}>
+                    <Flex justify="space-between" align="flex-start" gap={16}>
+                        <div style={{ minWidth: 180 }}>
+                            <Typography.Title level={5} style={{ margin: 0 }}>
+                                余额接口配置
+                            </Typography.Title>
+                            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                                用于用户侧查询 API Key 实际余额；查询密钥留空表示继续使用已保存密钥。
+                            </Typography.Text>
+                        </div>
+                        <Form form={balanceForm} layout="vertical" requiredMark={false} style={{ flex: 1 }}>
+                            <Flex gap={12} align="flex-start">
+                                <Form.Item name="apiUrl" label="查询地址" rules={[{ required: true, message: "请输入余额查询地址" }]} style={{ flex: 1, marginBottom: 0 }}>
+                                    <Input placeholder="https://example.com/api/balance" />
+                                </Form.Item>
+                                <Form.Item
+                                    name="secret"
+                                    label="查询密钥"
+                                    style={{ width: 320, marginBottom: 0 }}
+                                    extra={settings?.private.balance?.hasSecret ? "已保存密钥；留空表示不修改。" : "首次配置请填写。"}
+                                >
+                                    <Input.Password placeholder={settings?.private.balance?.hasSecret ? "留空表示不修改" : "nbc_..."} />
+                                </Form.Item>
+                                <Form.Item label=" " style={{ marginBottom: 0 }}>
+                                    <Button type="primary" icon={<SaveOutlined />} onClick={saveBalanceSettings}>
+                                        保存余额接口
+                                    </Button>
+                                </Form.Item>
+                            </Flex>
+                        </Form>
+                    </Flex>
+                </Card>
+
                 <Card variant="borderless">
                     <Table
                         rowKey="id"
@@ -244,7 +337,6 @@ export default function ModelsPage() {
                                 width: 260,
                                 render: (_, record) => (record.type === "image" ? <TierModelSummary model={record} /> : <Typography.Text code>{record.modelId || record.name}</Typography.Text>),
                             },
-                            { title: "API 地址", dataIndex: "apiUrl", ellipsis: true },
                             {
                                 title: "参考素材",
                                 width: 150,
@@ -320,9 +412,18 @@ export default function ModelsPage() {
                     <Form.Item name="name" label={currentType === "image" ? "分组名称" : "显示名称"} rules={[{ required: true, message: "请输入名称" }]} extra={currentType === "image" ? "例如：ChatGPT、即梦、豆包。用户侧会按这个名称选择分组。" : "前端展示给用户看的名称。"}>
                         <Input placeholder={currentType === "image" ? "例如：ChatGPT" : "例如：视频解析"} />
                     </Form.Item>
-                    <Form.Item name="apiUrl" label="请求地址" rules={[{ required: true, message: "请输入请求地址" }]} extra="OpenAI 兼容格式的接口地址，例如：https://api.example.com/v1">
-                        <Input placeholder="https://api.example.com/v1" />
-                    </Form.Item>
+                    <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40">
+                        <Typography.Text className="mb-2 block text-sm font-medium">获取模型</Typography.Text>
+                        <Space.Compact block>
+                            <Input.Password value={modelFetchKey} onChange={(event) => setModelFetchKey(event.target.value)} placeholder="填写任意可用 API Key 后获取模型列表" />
+                            <Button loading={isFetchingModels} onClick={loadUpstreamModels}>
+                                获取模型
+                            </Button>
+                        </Space.Compact>
+                        <Typography.Text type="secondary" className="mt-2 block text-xs">
+                            获取后下方只从真实模型列表里选择；模型请求地址统一使用固定接口，不需要单独填写。
+                        </Typography.Text>
+                    </div>
 
                     {currentType === "image" ? (
                         <>
@@ -330,7 +431,7 @@ export default function ModelsPage() {
                             <div className="mb-4 grid grid-cols-2 gap-3">
                                 {IMAGE_MODEL_TIERS.map((tier) => (
                                     <Form.Item key={tier} name={["tierModels", tier]} label={IMAGE_MODEL_TIER_LABELS[tier]} className="!mb-0">
-                                        <Input placeholder={`例如：gpt-image-${tier}`} />
+                                        <ModelIdSelect modelIds={fetchedModelIds} placeholder={`选择或输入 ${IMAGE_MODEL_TIER_LABELS[tier]} 模型`} />
                                     </Form.Item>
                                 ))}
                             </div>
@@ -356,7 +457,7 @@ export default function ModelsPage() {
                     ) : (
                         <>
                             <Form.Item name="modelId" label="调用模型 ID" extra="实际发送给 OpenAI 兼容接口的 model 参数，留空时默认使用显示名称。">
-                                <Input placeholder={currentType === "prompt" ? "例如：gpt-5.5" : "例如：video-parse"} />
+                                <ModelIdSelect modelIds={fetchedModelIds} placeholder="选择或输入模型 ID" />
                             </Form.Item>
                             {currentType === "video" ? (
                                 <>
@@ -469,6 +570,10 @@ function VideoCapabilitySummary({ model }: { model: AdminModel }) {
             <Tag>{capabilities.durations.map((value) => `${value}s`).join("/")}</Tag>
         </Space>
     );
+}
+
+function ModelIdSelect({ modelIds, placeholder }: { modelIds: string[]; placeholder: string }) {
+    return <AutoComplete allowClear options={modelIds.map((id) => ({ label: id, value: id }))} placeholder={placeholder} filterOption={(input, option) => String(option?.value || "").toLowerCase().includes(input.toLowerCase())} />;
 }
 
 function normalizeModelPayload(values: AdminModel) {

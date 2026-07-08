@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { App, Button, Form, Input, Modal, Segmented, Space, Tag, Typography } from "antd";
 import { KeyRound } from "lucide-react";
 
+import { UserBalanceBadge } from "@/components/layout/user-balance-badge";
 import { IMAGE_MODEL_TIERS } from "@/constant/image-model-options";
 import { normalizeVideoCapabilities } from "@/constant/video-model-options";
 import { detectAggregateModels, fetchPublicModels, type AdminModel } from "@/services/api/admin";
@@ -127,6 +128,7 @@ export function AppConfigModal() {
             updateConfig("promptModel", promptModel?.name || "");
             updateConfig("baseUrl", imageModel?.apiUrl || "");
             updateConfig("apiKey", mode === "aggregate" ? cleanedAggregate.apiKey || "" : imageModel ? cleanedApiKeys[imageModel.id] || "" : "");
+            window.dispatchEvent(new Event("user-model-config-updated"));
 
             message.success(configuredModels.length ? "配置已保存" : "配置已清空");
             finishConfig();
@@ -237,6 +239,10 @@ export function AppConfigModal() {
                         )}
                     </div>
 
+                    <div className="mt-4 flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-900">
+                        <Typography.Text className="text-xs text-stone-600 dark:text-stone-400">当前余额</Typography.Text>
+                        <UserBalanceBadge />
+                    </div>
                     <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs dark:border-blue-900 dark:bg-blue-950">
                         <Typography.Text className="text-xs text-blue-700 dark:text-blue-300">API Key 只保存在当前浏览器本地；聚合模式用一个 Key 匹配多个后台模型，单模型模式继续兼容逐个填写。</Typography.Text>
                     </div>
@@ -248,8 +254,10 @@ export function AppConfigModal() {
 
 function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck }: { models: AdminModel[]; aggregate: StoredAggregateModelConfig; isChecking: boolean; onChange: (value: StoredAggregateModelConfig) => void; onCheck: () => void }) {
     const catalogs = aggregate.catalogs || {};
+    const hasChecked = aggregateCatalogModelCount(catalogs) > 0;
     const matched = aggregateConfiguredModels(models, catalogs);
     const matchedIds = new Set(matched.map((model) => model.id));
+    const visibleModels = hasChecked ? matched : models;
     return (
         <div className="space-y-3">
             <div className="rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
@@ -265,9 +273,9 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                     </div>
                 </div>
             </div>
-            {models.length ? (
+            {visibleModels.length ? (
                 <div className="space-y-2">
-                    {models.map((model) => {
+                    {visibleModels.map((model) => {
                         const summary = aggregateMatchSummary(model, catalogs);
                         const active = matchedIds.has(model.id);
                         return (
@@ -294,7 +302,7 @@ function AggregateConfigPanel({ models, aggregate, isChecking, onChange, onCheck
                     })}
                 </div>
             ) : (
-                <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">后台还没有启用的模型分组</div>
+                <div className="rounded-lg border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800">{hasChecked ? "没有匹配到可用模型" : "后台还没有启用的模型分组"}</div>
             )}
         </div>
     );

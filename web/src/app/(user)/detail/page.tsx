@@ -9,6 +9,7 @@ import localforage from "localforage";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
+import { useCopyText } from "@/hooks/use-copy-text";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
 import { requestEdit, requestGeneration, requestPromptExtraction } from "@/services/api/image";
 import { uploadReferenceImage } from "@/services/image-bed";
@@ -79,6 +80,7 @@ export default function DetailWorkbenchPage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const copyText = useCopyText();
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeProjectIdRef = useRef<string | null>(null);
@@ -105,6 +107,7 @@ export default function DetailWorkbenchPage() {
     const [isRunning, setIsRunning] = useState(false);
     const [statusText, setStatusText] = useState("");
     const [planEditorOpen, setPlanEditorOpen] = useState(false);
+    const [promptViewOpen, setPromptViewOpen] = useState(false);
     const [draftStyleSummary, setDraftStyleSummary] = useState("");
     const [draftScreens, setDraftScreens] = useState<DetailPlanScreen[]>([]);
     const [generationModeOpen, setGenerationModeOpen] = useState(false);
@@ -1003,6 +1006,9 @@ export default function DetailWorkbenchPage() {
                         <Button type="primary" size="large" block icon={isRunning || hasReferenceUploading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={isRunning || hasReferenceUploading || hasReferenceUploadFailed} onClick={() => void startDesign()}>
                             生成分屏提示词
                         </Button>
+                        <Button block disabled={!plan} onClick={() => setPromptViewOpen(true)}>
+                            查看当前提示词
+                        </Button>
                         {hasReferenceUploading || hasReferenceUploadFailed ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200">{hasReferenceUploadFailed ? "有参考图上传失败，请删除失败图片或重新上传。" : "参考图正在上传，全部成功后才能生成。"}</div> : null}
                         {statusText ? <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-stone-300">{statusText}</div> : null}
                     </div>
@@ -1167,6 +1173,49 @@ export default function DetailWorkbenchPage() {
                         </div>
                     ))}
                 </div>
+            </Modal>
+
+            <Modal
+                title="当前提示词"
+                open={promptViewOpen}
+                onCancel={() => setPromptViewOpen(false)}
+                footer={
+                    <Space>
+                        <Button disabled={!plan} onClick={() => copyText(formatDetailPlanPrompt(plan), "全部提示词已复制")}>
+                            复制全部
+                        </Button>
+                        <Button type="primary" onClick={() => setPromptViewOpen(false)}>
+                            关闭
+                        </Button>
+                    </Space>
+                }
+                width={980}
+            >
+                {plan ? (
+                    <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-2">
+                        <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                            <div className="mb-1 text-sm font-medium text-stone-800 dark:text-stone-200">整体风格</div>
+                            <div className="whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{plan.styleSummary}</div>
+                        </div>
+                        {plan.screens.map((screen) => (
+                            <div key={screen.index} className="rounded-lg border border-stone-200 p-3 dark:border-white/10">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <Tag color={screen.index === currentIndex ? "blue" : undefined}>第 {screen.index} 屏</Tag>
+                                        <span className="text-sm font-medium text-stone-800 dark:text-stone-200">{screen.title}</span>
+                                    </div>
+                                    <Button size="small" onClick={() => copyText(screen.prompt, `第 ${screen.index} 屏提示词已复制`)}>
+                                        复制本屏
+                                    </Button>
+                                </div>
+                                <div className="mb-2 text-xs text-stone-500 dark:text-stone-400">{screen.goal}</div>
+                                <div className="whitespace-pre-wrap rounded-md bg-stone-50 p-3 text-sm leading-6 text-stone-700 dark:bg-white/[0.03] dark:text-stone-300">{screen.prompt}</div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="py-8 text-center text-sm text-stone-500">暂无提示词</div>
+                )}
             </Modal>
 
             <Modal title="选择生成模式" open={generationModeOpen} onCancel={() => setGenerationModeOpen(false)} footer={null} width={640}>
@@ -1494,6 +1543,11 @@ function extractJSON(content: string) {
 
 function cleanPromptText(text: string) {
     return text.replace(/^```[\s\S]*?\n?|\n?```$/g, "").trim();
+}
+
+function formatDetailPlanPrompt(plan: DetailPlan | null) {
+    if (!plan) return "";
+    return [`整体风格：\n${plan.styleSummary}`, ...plan.screens.map((screen) => `第 ${screen.index} 屏：${screen.title}\n目的：${screen.goal}\n提示词：\n${screen.prompt}`)].join("\n\n---\n\n");
 }
 
 function parseDetailLlmResponse(text: string): { code: number; data?: string; msg?: string } {

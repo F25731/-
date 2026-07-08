@@ -23,6 +23,7 @@ func New() *gin.Engine {
 	api.GET("/settings", gin.WrapF(handler.Settings))
 	api.GET("/internal/image-bed-settings", gin.WrapF(handler.InternalImageBedSettings))
 	api.GET("/models", gin.WrapF(handler.Models))
+	api.POST("/balance", gin.WrapF(handler.Balance))
 	api.POST("/prompt/extract", gin.WrapF(handler.PromptExtract))
 	api.POST("/detail-llm", gin.WrapF(handler.DetailLLM))
 	v1 := api.Group("/v1", middleware.UserAuth)
@@ -72,6 +73,7 @@ func New() *gin.Engine {
 		handler.AdminDeleteAsset(c.Writer, c.Request, c.Param("id"))
 	})
 	admin.GET("/models", gin.WrapF(handler.AdminModels))
+	admin.POST("/models/fetch", gin.WrapF(handler.AdminFetchModels))
 	admin.POST("/models", func(c *gin.Context) {
 		handler.AdminSaveModel(c.Writer, c.Request, "")
 	})

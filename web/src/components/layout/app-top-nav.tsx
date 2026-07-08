@@ -8,6 +8,7 @@ import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
+import { UserBalanceBadge } from "@/components/layout/user-balance-badge";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -21,7 +22,7 @@ export function AppTopNav() {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const isReady = useUserStore((state) => state.isReady);
-    const hideHeader = pathname === "/detail" || /^\/detail\/[^/]+/.test(pathname) || /^\/canvas\/[^/]+/.test(pathname);
+    const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
 
@@ -72,6 +73,7 @@ export function AppTopNav() {
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
                             {!isReady ? null : (
                                 <>
+                                    <UserBalanceBadge />
                                     <button
                                         type="button"
                                         className="inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white [&_svg]:size-4"

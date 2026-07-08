@@ -60,12 +60,19 @@ type PrivateSetting struct {
 	PromptSync PromptSyncSetting  `json:"promptSync"`
 	Auth       PrivateAuthSetting `json:"auth"`
 	ImageBed   ImageBedSetting    `json:"imageBed"`
+	Balance    BalanceSetting     `json:"balance"`
 }
 
 type ImageBedSetting struct {
 	UploadURL string `json:"uploadUrl"`
 	APIKey    string `json:"apiKey"`
 	HasAPIKey bool   `json:"hasApiKey,omitempty"`
+}
+
+type BalanceSetting struct {
+	APIURL    string `json:"apiUrl"`
+	Secret    string `json:"secret"`
+	HasSecret bool   `json:"hasSecret,omitempty"`
 }
 
 // PromptSyncSetting 提示词定时同步配置。

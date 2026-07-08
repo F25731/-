@@ -54,6 +54,19 @@ func AdminModels(w http.ResponseWriter, r *http.Request) {
 	OK(w, result)
 }
 
+func AdminFetchModels(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		APIKey string `json:"apiKey"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	result, err := service.AdminPoolModels(payload.APIKey)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func AdminSaveModel(w http.ResponseWriter, r *http.Request, id string) {
 	var item model.AdminModel
 	_ = json.NewDecoder(r.Body).Decode(&item)

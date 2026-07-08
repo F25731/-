@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 )
@@ -34,6 +35,7 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 	keepPrivateAPIKeys(&settings, normalizedSaved)
 	keepPrivateAuthSecrets(&settings, normalizedSaved)
 	keepImageBedSecret(&settings, normalizedSaved)
+	keepBalanceSecret(&settings, normalizedSaved)
 	result, err := repository.SaveSettings(settings, now())
 	if err == nil {
 		RefreshPromptSyncScheduler()
@@ -55,6 +57,21 @@ func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error
 		return nil, err
 	}
 	return fetchAdminChannelModels(resolved)
+}
+
+func AdminPoolModels(apiKey string) ([]string, error) {
+	channel := normalizeModelChannel(model.ModelChannel{
+		Protocol: "openai",
+		Name:     "模型检测",
+		BaseURL:  config.Cfg.PoolAPIBaseURL,
+		APIKey:   strings.TrimSpace(apiKey),
+		Weight:   1,
+		Enabled:  true,
+	})
+	if strings.TrimSpace(channel.APIKey) == "" {
+		return nil, safeMessageError{message: "缺少 API Key"}
+	}
+	return fetchAdminChannelModels(channel)
 }
 
 func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName string) (string, error) {
@@ -117,6 +134,9 @@ func normalizePrivateSetting(setting model.PrivateSetting) model.PrivateSetting 
 	setting.ImageBed.UploadURL = strings.TrimSpace(setting.ImageBed.UploadURL)
 	setting.ImageBed.APIKey = strings.TrimSpace(setting.ImageBed.APIKey)
 	setting.ImageBed.HasAPIKey = setting.ImageBed.APIKey != ""
+	setting.Balance.APIURL = strings.TrimSpace(setting.Balance.APIURL)
+	setting.Balance.Secret = strings.TrimSpace(setting.Balance.Secret)
+	setting.Balance.HasSecret = setting.Balance.Secret != ""
 	for i := range setting.Channels {
 		if setting.Channels[i].Protocol == "" {
 			setting.Channels[i].Protocol = "openai"
@@ -138,6 +158,8 @@ func hidePrivateAPIKeys(settings model.Settings) model.Settings {
 	settings.Private.Auth.LinuxDo.ClientSecret = ""
 	settings.Private.ImageBed.HasAPIKey = strings.TrimSpace(settings.Private.ImageBed.APIKey) != ""
 	settings.Private.ImageBed.APIKey = ""
+	settings.Private.Balance.HasSecret = strings.TrimSpace(settings.Private.Balance.Secret) != ""
+	settings.Private.Balance.Secret = ""
 	return settings
 }
 
@@ -161,6 +183,12 @@ func keepPrivateAuthSecrets(settings *model.Settings, saved model.Settings) {
 func keepImageBedSecret(settings *model.Settings, saved model.Settings) {
 	if strings.TrimSpace(settings.Private.ImageBed.APIKey) == "" {
 		settings.Private.ImageBed.APIKey = saved.Private.ImageBed.APIKey
+	}
+}
+
+func keepBalanceSecret(settings *model.Settings, saved model.Settings) {
+	if strings.TrimSpace(settings.Private.Balance.Secret) == "" {
+		settings.Private.Balance.Secret = saved.Private.Balance.Secret
 	}
 }
 
