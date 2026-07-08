@@ -1,15 +1,26 @@
 "use client";
 
-import { CloudUploadOutlined, LinkOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, LinkOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { App, Button, Card, Empty, Input, Radio, Segmented, Slider, Space, Tag, Typography, Upload } from "antd";
 import { Clock3, Film, Image as ImageIcon, Music2, Video } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { VIDEO_QUALITY_OPTIONS } from "@/constant/video-model-options";
-import { uploadReferenceBlobToImageBed, uploadReferenceImage } from "@/services/image-bed";
 import { requestVideoGeneration, type VideoReferenceMaterial } from "@/services/api/video";
+import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
+import { uploadReferenceBlobToImageBed, uploadReferenceImage } from "@/services/image-bed";
 import { useConfigStore, useEffectiveConfig, videoCapabilitiesForModel } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+
+type VideoHistoryItem = {
+    id: string;
+    prompt: string;
+    url: string;
+    storageKey: string;
+    createdAt: number;
+};
+
+const VIDEO_HISTORY_KEY = "zmo-video-workbench-history-v1";
 
 export default function VideoPage() {
     const { message } = App.useApp();
@@ -28,6 +39,7 @@ export default function VideoPage() {
     const [mediaReferences, setMediaReferences] = useState<VideoReferenceMaterial[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [resultUrl, setResultUrl] = useState("");
+    const [history, setHistory] = useState<VideoHistoryItem[]>([]);
 
     const videoModels = useMemo(() => config.models.filter((model) => config.modelTypes[model] === "video"), [config.modelTypes, config.models]);
     const hasReferenceInputs = capabilities.referenceImageLimit > 0 || capabilities.referenceVideoLimit > 0 || capabilities.referenceAudioLimit > 0;
@@ -47,6 +59,24 @@ export default function VideoPage() {
             ...current.filter((item) => item.type === "audio").slice(0, capabilities.referenceAudioLimit),
         ]);
     }, [capabilities]);
+
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            const items = await Promise.all(
+                readVideoHistory().map(async (item) => ({
+                    ...item,
+                    url: await resolveMediaUrl(item.storageKey, item.url),
+                })),
+            );
+            if (cancelled) return;
+            setHistory(items);
+            if (items[0]?.url) setResultUrl(items[0].url);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const handleModelChange = (model: string) => {
         setSelectedModel(model);
@@ -122,10 +152,16 @@ export default function VideoPage() {
         }
         setIsGenerating(true);
         try {
-            if (resultUrl) URL.revokeObjectURL(resultUrl);
             const runtimeConfig = { ...config, model: selectedModel, videoModel: selectedModel, size: ratio, vquality: quality, videoSeconds: String(duration) };
             const blob = await requestVideoGeneration(runtimeConfig, prompt.trim(), imageReferences, mediaReferences);
-            setResultUrl(URL.createObjectURL(blob));
+            const stored = await uploadMediaFile(blob, "video-workbench");
+            const item: VideoHistoryItem = { id: newID(), prompt: prompt.trim(), url: stored.url, storageKey: stored.storageKey, createdAt: Date.now() };
+            setResultUrl(stored.url);
+            setHistory((current) => {
+                const next = [item, ...current].slice(0, 30);
+                writeVideoHistory(next);
+                return next;
+            });
             message.success("视频生成完成");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "生成失败");
@@ -134,15 +170,34 @@ export default function VideoPage() {
         }
     };
 
+    const handleDownload = (url = resultUrl, name = "video.mp4") => {
+        if (!url) return;
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name.endsWith(".mp4") ? name : `${name}.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    };
+
+    const removeHistory = (id: string) => {
+        setHistory((current) => {
+            const item = current.find((entry) => entry.id === id);
+            if (item) void deleteStoredMedia([item.storageKey]);
+            const next = current.filter((entry) => entry.id !== id);
+            writeVideoHistory(next);
+            if (item?.url === resultUrl) setResultUrl(next[0]?.url || "");
+            return next;
+        });
+    };
+
     return (
         <main className="h-full overflow-auto bg-background text-stone-950 dark:text-stone-100">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-6 py-6">
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
                 <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
-                    <div>
-                        <Typography.Title level={3} className="!mb-1">
-                            视频工作台
-                        </Typography.Title>
-                    </div>
+                    <Typography.Title level={3} className="!mb-1">
+                        视频工作台
+                    </Typography.Title>
                     <Space wrap>
                         <Tag color="purple">{capabilities.market}</Tag>
                         <Tag>{capabilities.ratios.length} 个比例</Tag>
@@ -151,7 +206,7 @@ export default function VideoPage() {
                     </Space>
                 </header>
 
-                <div className="grid gap-5 lg:grid-cols-[440px_1fr]">
+                <div className="grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)_300px]">
                     <Card className="border-stone-200 dark:border-stone-800" styles={{ body: { padding: 18 } }}>
                         <Space direction="vertical" size={18} className="w-full">
                             <SectionTitle icon={<Film className="size-4" />} title="视频模型" />
@@ -178,54 +233,20 @@ export default function VideoPage() {
                             {hasReferenceInputs ? (
                                 <ControlBlock title="参考素材">
                                     {capabilities.referenceImageLimit > 0 ? (
-                                        <ReferenceRow
-                                            icon={<ImageIcon className="size-4" />}
-                                            title="参考图"
-                                            limit={capabilities.referenceImageLimit}
-                                            count={imageReferences.length}
-                                            value={imageUrl}
-                                            placeholder="HTTPS 图片 URL"
-                                            accept="image/*"
-                                            onValueChange={setImageUrl}
-                                            onAdd={addImageUrl}
-                                            onUpload={(file) => uploadImage(file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                        />
+                                        <ReferenceRow icon={<ImageIcon className="size-4" />} title="参考图" limit={capabilities.referenceImageLimit} count={imageReferences.length} value={imageUrl} placeholder="HTTPS 图片 URL" accept="image/*" onValueChange={setImageUrl} onAdd={addImageUrl} onUpload={(file) => uploadImage(file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))} />
                                     ) : null}
                                     {capabilities.referenceVideoLimit > 0 ? (
-                                        <ReferenceRow
-                                            icon={<Video className="size-4" />}
-                                            title="参考视频"
-                                            limit={capabilities.referenceVideoLimit}
-                                            count={mediaReferences.filter((item) => item.type === "video").length}
-                                            value={videoUrlInput}
-                                            placeholder="HTTPS 视频 URL"
-                                            accept="video/*"
-                                            extra={`总时长建议不超过 ${capabilities.referenceVideoMaxSeconds}s`}
-                                            onValueChange={setVideoUrlInput}
-                                            onAdd={() => addMediaUrl("video", videoUrlInput, setVideoUrlInput)}
-                                            onUpload={(file) => uploadMedia("video", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                        />
+                                        <ReferenceRow icon={<Video className="size-4" />} title="参考视频" limit={capabilities.referenceVideoLimit} count={mediaReferences.filter((item) => item.type === "video").length} value={videoUrlInput} placeholder="HTTPS 视频 URL" accept="video/*" extra={`总时长建议不超过 ${capabilities.referenceVideoMaxSeconds}s`} onValueChange={setVideoUrlInput} onAdd={() => addMediaUrl("video", videoUrlInput, setVideoUrlInput)} onUpload={(file) => uploadMedia("video", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))} />
                                     ) : null}
                                     {capabilities.referenceAudioLimit > 0 ? (
-                                        <ReferenceRow
-                                            icon={<Music2 className="size-4" />}
-                                            title="参考音频"
-                                            limit={capabilities.referenceAudioLimit}
-                                            count={mediaReferences.filter((item) => item.type === "audio").length}
-                                            value={audioUrlInput}
-                                            placeholder="HTTPS 音频 URL"
-                                            accept="audio/*"
-                                            onValueChange={setAudioUrlInput}
-                                            onAdd={() => addMediaUrl("audio", audioUrlInput, setAudioUrlInput)}
-                                            onUpload={(file) => uploadMedia("audio", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))}
-                                        />
+                                        <ReferenceRow icon={<Music2 className="size-4" />} title="参考音频" limit={capabilities.referenceAudioLimit} count={mediaReferences.filter((item) => item.type === "audio").length} value={audioUrlInput} placeholder="HTTPS 音频 URL" accept="audio/*" onValueChange={setAudioUrlInput} onAdd={() => addMediaUrl("audio", audioUrlInput, setAudioUrlInput)} onUpload={(file) => uploadMedia("audio", file).catch((error) => message.error(error instanceof Error ? error.message : "上传失败"))} />
                                     ) : null}
                                     <MaterialTags images={imageReferences} media={mediaReferences} onRemoveImage={(id) => setImageReferences((current) => current.filter((item) => item.id !== id))} onRemoveMedia={(url) => setMediaReferences((current) => current.filter((item) => item.url !== url))} />
                                 </ControlBlock>
                             ) : null}
 
                             <ControlBlock title="视频描述">
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述镜头、主体、动作、场景、风格和声音。例如：高光泽产品舞台上，一辆白色超跑由全息零件逐步组装成型，镜头环绕揭示。" rows={7} className="resize-none" />
+                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述镜头、主体、动作、场景和风格" rows={7} className="resize-none" />
                             </ControlBlock>
 
                             <Button type="primary" size="large" block icon={<PlayCircleOutlined />} loading={isGenerating} onClick={handleGenerate} className="h-12 text-base font-medium">
@@ -234,13 +255,20 @@ export default function VideoPage() {
                         </Space>
                     </Card>
 
-                    <section className="flex min-h-[640px] items-center justify-center rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
+                    <section className="relative flex min-h-[640px] items-center justify-center rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-800 dark:bg-stone-900">
                         {resultUrl ? (
-                            <video src={resultUrl} controls className="max-h-[720px] max-w-full rounded-lg bg-black shadow-lg" />
+                            <>
+                                <video src={resultUrl} controls className="max-h-[720px] max-w-full rounded-lg bg-black shadow-lg" />
+                                <Button type="primary" icon={<DownloadOutlined />} className="absolute bottom-4 right-4" onClick={() => handleDownload()}>
+                                    下载视频
+                                </Button>
+                            </>
                         ) : (
                             <Empty image={<Video className="mx-auto size-16 text-stone-300 dark:text-stone-700" />} description="生成结果会显示在这里" />
                         )}
                     </section>
+
+                    <VideoHistoryPanel history={history} onPreview={(item) => setResultUrl(item.url)} onDownload={(item) => handleDownload(item.url, `video-${item.createdAt}.mp4`)} onDelete={removeHistory} />
                 </div>
             </div>
         </main>
@@ -303,7 +331,11 @@ function ReferenceRow({ icon, title, limit, count, value, placeholder, accept, d
                     </Button>
                 </Upload>
             </div>
-            {extra ? <Typography.Text type="secondary" className="mt-1 block text-xs">{extra}</Typography.Text> : null}
+            {extra ? (
+                <Typography.Text type="secondary" className="mt-1 block text-xs">
+                    {extra}
+                </Typography.Text>
+            ) : null}
         </div>
     );
 }
@@ -316,20 +348,53 @@ function MaterialTags({ images, media, onRemoveImage, onRemoveMedia }: { images:
         <div className="flex flex-wrap gap-1.5">
             {images.map((item, index) => (
                 <Tag key={item.id} closable onClose={() => onRemoveImage(item.id)}>
-                    @image{index + 1}
+                    图{index + 1}
                 </Tag>
             ))}
             {videos.map((item, index) => (
                 <Tag key={item.url} closable onClose={() => onRemoveMedia(item.url)}>
-                    @video{index + 1}
+                    视频{index + 1}
                 </Tag>
             ))}
             {audios.map((item, index) => (
                 <Tag key={item.url} closable onClose={() => onRemoveMedia(item.url)}>
-                    @audio{index + 1}
+                    音频{index + 1}
                 </Tag>
             ))}
         </div>
+    );
+}
+
+function VideoHistoryPanel({ history, onPreview, onDownload, onDelete }: { history: VideoHistoryItem[]; onPreview: (item: VideoHistoryItem) => void; onDownload: (item: VideoHistoryItem) => void; onDelete: (id: string) => void }) {
+    return (
+        <Card className="border-stone-200 dark:border-stone-800 lg:col-span-2 xl:col-span-1" styles={{ body: { padding: 16 } }}>
+            <div className="mb-3 flex items-center justify-between">
+                <Typography.Text className="font-medium">视频生成记录</Typography.Text>
+                <Tag>{history.length}</Tag>
+            </div>
+            {history.length ? (
+                <div className="space-y-3">
+                    {history.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-stone-200 p-2 dark:border-stone-800">
+                            <Typography.Paragraph ellipsis={{ rows: 2 }} className="!mb-2 text-xs">
+                                {item.prompt || "未填写提示词"}
+                            </Typography.Paragraph>
+                            <div className="flex gap-2">
+                                <Button size="small" icon={<PlayCircleOutlined />} onClick={() => onPreview(item)}>
+                                    预览
+                                </Button>
+                                <Button size="small" icon={<DownloadOutlined />} onClick={() => onDownload(item)}>
+                                    下载
+                                </Button>
+                                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(item.id)} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无生成记录" />
+            )}
+        </Card>
     );
 }
 
@@ -339,4 +404,18 @@ function isRemoteUrl(value: string) {
 
 function newID() {
     return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function readVideoHistory(): VideoHistoryItem[] {
+    if (typeof window === "undefined") return [];
+    try {
+        return (JSON.parse(window.localStorage.getItem(VIDEO_HISTORY_KEY) || "[]") as VideoHistoryItem[]).filter((item) => item.id && item.storageKey);
+    } catch {
+        return [];
+    }
+}
+
+function writeVideoHistory(items: VideoHistoryItem[]) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(items.map((item) => ({ ...item, url: "" }))));
 }

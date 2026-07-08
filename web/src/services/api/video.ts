@@ -23,7 +23,10 @@ type VideoResponse = {
     error?: { message?: string; code?: string };
     metadata?: { url?: string };
 };
-type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
+
+type ImageVideoResponse = { created?: number; data?: Array<{ url?: string; b64_json?: string }> };
+type ApiVideoResponse = VideoResponse | ImageVideoResponse | { code?: number; data?: VideoResponse | ImageVideoResponse | null; msg?: string };
+
 type VideoRequestBody = {
     model: string;
     prompt: string;
@@ -36,6 +39,7 @@ type VideoRequestBody = {
     image?: string;
     images?: string[];
     input_reference?: string;
+    extra_fields?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
 };
 
@@ -61,24 +65,39 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     const model = config.channelMode === "remote" ? displayModel : resolveModelRuntimeConfig(config, displayModel).modelId || displayModel;
     const body = await buildVideoRequestBody(config, displayModel, model, prompt, references, mediaReferences);
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
+        const imagePayload = await createVideoTask(config, body);
+        const imageResultUrl = extractImageVideoUrl(imagePayload);
+        if (imageResultUrl) return fetchVideoResultBlob(imageResultUrl);
+
+        const created = unwrapVideoResponse(imagePayload);
         const taskId = created.id || created.task_id;
         if (!taskId) throw new Error("视频接口没有返回任务 ID");
+
         let resultUrl = extractVideoUrl(created);
         for (;;) {
             const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${taskId}`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined })).data);
             resultUrl = extractVideoUrl(video) || resultUrl;
             if (isVideoTaskCompleted(video.status) || resultUrl) break;
-            if (video.status === "failed" || video.status === "cancelled") throw new Error(video.error?.message || "视频生成失败");
+            if (isVideoTaskFailed(video.status)) throw new Error(video.error?.message || "视频生成失败");
             await new Promise((resolve) => setTimeout(resolve, 2500));
         }
         if (resultUrl) return fetchVideoResultBlob(resultUrl);
+
         const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${taskId}/content`), { headers: aiHeaders(config), params: config.channelMode === "remote" ? { model } : undefined, responseType: "blob" });
         const contentUrl = await extractVideoBlobUrl(content.data);
         if (contentUrl) return fetchVideoResultBlob(contentUrl);
         return content.data;
     } catch (error) {
         throw new Error(readAxiosError(error, "视频生成失败"));
+    }
+}
+
+async function createVideoTask(config: AiConfig, body: VideoRequestBody) {
+    try {
+        return (await axios.post<ApiVideoResponse>(aiApiUrl(config, "/images/generations"), body, { headers: aiHeaders(config) })).data;
+    } catch (error) {
+        if (!axios.isAxiosError(error) || ![404, 405].includes(Number(error.response?.status))) throw error;
+        return (await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data;
     }
 }
 
@@ -91,6 +110,7 @@ async function buildVideoRequestBody(config: AiConfig, displayModel: string, mod
     const videoLimit = Math.max(0, Math.floor(Number(capabilities.referenceVideoLimit) || 0));
     const audioLimit = Math.max(0, Math.floor(Number(capabilities.referenceAudioLimit) || 0));
     if (capabilities.requireImageReference && imageLimit > 0 && references.length === 0) throw new Error("当前视频模型必须添加参考图");
+
     const remoteReferences = imageLimit > 0 ? await ensureReferenceImagesRemoteUrls(references.slice(0, imageLimit)) : [];
     const images = remoteReferences.map(imageAiUrl).filter((url): url is string => Boolean(url));
     const videos = videoLimit > 0 ? mediaReferences.filter((item) => item.type === "video").slice(0, videoLimit).map((item) => item.url.trim()).filter(Boolean) : [];
@@ -98,10 +118,19 @@ async function buildVideoRequestBody(config: AiConfig, displayModel: string, mod
     const body: VideoRequestBody = {
         model,
         prompt,
+        size: size || undefined,
         duration: Number(seconds),
         seconds,
         resolution,
         quality: resolution,
+        extra_fields: {
+            seconds,
+            duration: Number(seconds),
+            video_seconds: seconds,
+            aspect_ratio: size,
+            resolution,
+            quality: resolution,
+        },
         metadata: {
             durationSeconds: Number(seconds),
             resolution,
@@ -109,10 +138,7 @@ async function buildVideoRequestBody(config: AiConfig, displayModel: string, mod
             aspectRatio: size,
         },
     };
-    if (size) {
-        body.size = size;
-        body.aspect_ratio = size;
-    }
+    if (size) body.aspect_ratio = size;
     applyReferenceImages(body, model, images);
     applyReferenceContent(body, images, videos, audios);
     return body;
@@ -124,13 +150,17 @@ function applyReferenceImages(body: VideoRequestBody, model: string, images: str
     if (modelName.includes("kling")) {
         body.image = images[0];
         if (images[1]) body.metadata = { ...(body.metadata || {}), image_tail: images[1] };
+        body.extra_fields = { ...(body.extra_fields || {}), image_url: images[0], imageUrls: images, images };
         return;
     }
     if (modelName.includes("sora")) {
         body.input_reference = images[0];
+        body.extra_fields = { ...(body.extra_fields || {}), image_url: images[0], imageUrls: images, images };
         return;
     }
+    body.image = images[0];
     body.images = images;
+    body.extra_fields = { ...(body.extra_fields || {}), image_url: images[0], imageUrls: images, images };
 }
 
 function applyReferenceContent(body: VideoRequestBody, images: string[], videos: string[], audios: string[]) {
@@ -141,6 +171,7 @@ function applyReferenceContent(body: VideoRequestBody, images: string[], videos:
     ];
     if (!content.length) return;
     body.metadata = { ...(body.metadata || {}), content };
+    body.extra_fields = { ...(body.extra_fields || {}), content, videos, audios };
 }
 
 function normalizeVideoSeconds(value: string) {
@@ -179,22 +210,35 @@ function normalizeVideoResolution(value: string, size: string | null) {
     return `${resolution}p`;
 }
 
-function unwrapVideoResponse(payload: ApiVideoResponse) {
+function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
     if (!payload) throw new Error("接口没有返回视频任务");
+    const imageUrl = extractImageVideoUrl(payload);
+    if (imageUrl) return { url: imageUrl };
     if ("code" in payload && typeof payload.code === "number") {
         if (payload.code !== 0) throw new Error(payload.msg || "请求失败");
         if (!payload.data) throw new Error("接口没有返回视频任务");
-        return payload.data;
+        return unwrapVideoResponse(payload.data as ApiVideoResponse);
     }
-    return payload;
+    return payload as VideoResponse;
 }
 
 function isVideoTaskCompleted(status = "") {
     return ["completed", "done", "succeeded", "success", "finished"].includes(status.toLowerCase());
 }
 
+function isVideoTaskFailed(status = "") {
+    return ["failed", "cancelled", "canceled", "error"].includes(status.toLowerCase());
+}
+
 function extractVideoUrl(video: VideoResponse) {
     return [video.url, video.video?.url, video.video_url, video.result_url, video.metadata?.url, ...(video.output || [])].find((url) => /^https?:\/\//i.test(String(url || ""))) || "";
+}
+
+function extractImageVideoUrl(payload: ApiVideoResponse) {
+    if (!payload) return "";
+    if ("code" in payload && typeof payload.code === "number" && payload.data) return extractImageVideoUrl(payload.data as ApiVideoResponse);
+    if (!("data" in payload) || !Array.isArray(payload.data)) return "";
+    return payload.data.map((item) => item.url).find((url) => /^https?:\/\//i.test(String(url || ""))) || "";
 }
 
 async function fetchVideoResultBlob(url: string) {
