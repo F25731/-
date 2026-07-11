@@ -3033,12 +3033,25 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (metadata.generationType !== "edit") return [];
     if (!metadata.references?.length) return null;
     const references = await Promise.all(
-        metadata.references.map(async (url, index) => {
-            const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+        metadata.references.map(async (url) => {
+            const isStoredImage = url.startsWith("image:");
+            const dataUrl = isStoredImage ? await resolveImageUrl(url, "") : url;
+            if (!dataUrl) return null;
+            const id = `reference-${stableReferenceId(url)}`;
+            const remoteUrl = /^https?:\/\//i.test(url) ? url : undefined;
+            return { id, name: `${id}.png`, type: "image/png", dataUrl, url: remoteUrl, remoteUrl, storageKey: isStoredImage ? url : undefined };
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
+}
+
+function stableReferenceId(value: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
 }
 
 async function hydrateCanvasImages(nodes: CanvasNodeData[]) {

@@ -11,7 +11,7 @@ type ImageBedUploadResponse = {
     msg?: string;
 };
 
-const IMAGE_BED_CACHE_KEY = "infinite-canvas:image-bed-reference-urls:v1";
+const IMAGE_BED_CACHE_KEY = "infinite-canvas:image-bed-reference-urls:v2";
 const remoteUploadPromises = new Map<string, Promise<string>>();
 
 export function isRemoteImageUrl(value?: string) {
@@ -98,7 +98,21 @@ async function fetchImageBlob(url: string) {
 }
 
 function referenceCacheKey(image: ReferenceImage) {
-    return image.storageKey || image.id || image.name || "";
+    const storageKey = image.storageKey?.trim();
+    if (storageKey) return storageKey;
+    const remoteSource = [image.remoteUrl, image.url, image.dataUrl].find((value) => isRemoteImageUrl(value));
+    if (remoteSource) return `url:${stableReferenceHash(remoteSource)}`;
+    if (image.dataUrl?.startsWith("data:")) return `data:${stableReferenceHash(image.dataUrl)}`;
+    return "";
+}
+
+function stableReferenceHash(value: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
 }
 
 function readCache() {
