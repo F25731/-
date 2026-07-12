@@ -9,7 +9,7 @@ const (
 
 // Asset 素材记录。
 type Asset struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
+	ID          string    `json:"id" gorm:"type:varchar(191);primaryKey"`
 	Title       string    `json:"title"`
 	Type        AssetType `json:"type"`
 	CoverURL    string    `json:"coverUrl"`

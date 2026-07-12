@@ -17,19 +17,19 @@ const (
 
 // User 系统用户。
 type User struct {
-	ID          string     `json:"id" gorm:"primaryKey"`
-	Username    string     `json:"username" gorm:"uniqueIndex"`
+	ID          string     `json:"id" gorm:"type:varchar(191);primaryKey"`
+	Username    string     `json:"username" gorm:"type:varchar(191);uniqueIndex"`
 	Password    string     `json:"password,omitempty"`
 	Email       string     `json:"email"`
 	DisplayName string     `json:"displayName"`
 	AvatarURL   string     `json:"avatarUrl"`
 	Role        UserRole   `json:"role"`
 	Credits     int        `json:"credits"`
-	AffCode     string     `json:"affCode" gorm:"uniqueIndex"`
+	AffCode     string     `json:"affCode" gorm:"type:varchar(191);uniqueIndex"`
 	AffCount    int        `json:"affCount"`
 	InviterID   string     `json:"inviterId"`
 	GithubID    string     `json:"githubId"`
-	LinuxDoID   string     `json:"linuxDoId" gorm:"index"`
+	LinuxDoID   string     `json:"linuxDoId" gorm:"type:varchar(191);index"`
 	WechatID    string     `json:"wechatId"`
 	Status      UserStatus `json:"status"`
 	LastLoginAt string     `json:"lastLoginAt"`
@@ -85,8 +85,8 @@ const (
 
 // CreditLog 用户算力点变更流水。
 type CreditLog struct {
-	ID        string        `json:"id" gorm:"primaryKey"`
-	UserID    string        `json:"userId" gorm:"index"`
+	ID        string        `json:"id" gorm:"type:varchar(191);primaryKey"`
+	UserID    string        `json:"userId" gorm:"type:varchar(191);index"`
 	Type      CreditLogType `json:"type"`
 	Amount    int           `json:"amount"`
 	Balance   int           `json:"balance"`

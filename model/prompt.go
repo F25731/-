@@ -2,12 +2,12 @@ package model
 
 // Prompt 提示词记录。
 type Prompt struct {
-	ID        string   `json:"id" gorm:"primaryKey"`
+	ID        string   `json:"id" gorm:"type:varchar(191);primaryKey"`
 	Title     string   `json:"title"`
 	CoverURL  string   `json:"coverUrl"`
 	Prompt    string   `json:"prompt"`
 	Tags      []string `json:"tags" gorm:"serializer:json"`
-	Category  string   `json:"category" gorm:"index"`
+	Category  string   `json:"category" gorm:"type:varchar(191);index"`
 	GithubURL string   `json:"githubUrl" gorm:"-"`
 	Preview   string   `json:"preview"`
 	CreatedAt string   `json:"createdAt"`
@@ -24,7 +24,7 @@ type PromptList struct {
 
 // PromptCategory 提示词分类。
 type PromptCategory struct {
-	Category    string `json:"category" gorm:"primaryKey"`
+	Category    string `json:"category" gorm:"type:varchar(191);primaryKey"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	GithubURL   string `json:"githubUrl"`

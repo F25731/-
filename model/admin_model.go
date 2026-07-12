@@ -30,10 +30,10 @@ type VideoCapabilities struct {
 
 // AdminModel 后台可配置的模型。
 type AdminModel struct {
-	ID                string            `json:"id" gorm:"primaryKey"`
+	ID                string            `json:"id" gorm:"type:varchar(191);primaryKey"`
 	Name              string            `json:"name"`
 	ModelID           string            `json:"modelId"`
-	Type              AdminModelType    `json:"type" gorm:"index"`
+	Type              AdminModelType    `json:"type" gorm:"type:varchar(32);index"`
 	APIURL            string            `json:"apiUrl"`
 	APIKey            string            `json:"apiKey"`
 	TierModels        map[string]string `json:"tierModels" gorm:"serializer:json"`
