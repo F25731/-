@@ -1980,6 +1980,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             let pendingChildIds: string[] = [];
+            let releaseRunningInBackground = false;
             if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
 
             try {
@@ -2035,7 +2036,7 @@ function InfiniteCanvasPage() {
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: aiEditReferenceImages.length > 0,
-                            primaryImageId: count > 1 ? rootId : undefined,
+                            primaryImageId: undefined,
                             ...generationMetadata,
                             imageBatchExpanded: count > 1 ? true : undefined,
                         },
@@ -2097,11 +2098,23 @@ function InfiniteCanvasPage() {
                     setSelectedConnectionId(null);
                     setDialogNodeId(nodeId);
 
-                    let hasSuccess = false;
-                    let hasFailure = false;
-                    let handledFailure = false;
-                    await Promise.all(
-                        targetIds.map(async (targetId, index) => {
+                    releaseRunningInBackground = true;
+                    const batchState = { success: 0, failure: 0, handledFailure: false };
+                    const updateBatchStatus = (done: boolean) => {
+                        const hasSuccess = batchState.success > 0;
+                        setNodes((prev) =>
+                            prev.map((node) =>
+                                node.id === nodeId && isConfigNode
+                                    ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : done ? NODE_STATUS_ERROR : NODE_STATUS_LOADING, errorDetails: hasSuccess ? undefined : done ? "全部图片生成失败" : undefined } }
+                                    : node.id === nodeId && isEmptyImageNode
+                                      ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : done ? NODE_STATUS_ERROR : NODE_STATUS_LOADING, errorDetails: hasSuccess ? undefined : done ? "全部图片生成失败" : undefined } }
+                                      : node.id === rootId && !hasSuccess && done
+                                        ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
+                                        : node,
+                            ),
+                        );
+                    };
+                    const imageTasks = targetIds.map(async (targetId, index) => {
                             const plan = promptPlans[index] || rootPromptPlan;
                             try {
                                 const image = aiEditReferenceImages.length
@@ -2113,7 +2126,7 @@ function InfiniteCanvasPage() {
                                     const root = prev.find((node) => node.id === rootId);
                                     return prev.map((node) => {
                                         if (node.id !== targetId && node.id !== rootId) return node;
-                                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId))
+                                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.content))
                                             return {
                                                 ...node,
                                                 width: imageSize.width,
@@ -2132,32 +2145,25 @@ function InfiniteCanvasPage() {
                                         return node;
                                     });
                                 });
-                                hasSuccess = true;
-                                if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
+                                batchState.success += 1;
+                                updateBatchStatus(false);
                                 return true;
                             } catch (error) {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                                handledFailure = handleAiRequestError(error) || handledFailure;
-                                hasFailure = true;
+                                batchState.handledFailure = handleAiRequestError(error) || batchState.handledFailure;
+                                batchState.failure += 1;
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                                updateBatchStatus(false);
                                 return false;
                             }
-                        }),
-                    );
-                    if (hasFailure && !handledFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
-                    setNodes((prev) =>
-                        prev.map((node) =>
-                            node.id === nodeId && isConfigNode
-                                ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
-                                : node.id === nodeId && isEmptyImageNode
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
-                                  : targetIds.includes(node.id) && node.metadata?.content
-                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
-                                  : node.id === rootId && !hasSuccess
-                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
-                                    : node,
-                        ),
-                    );
+                        });
+                    void Promise.allSettled(imageTasks).then(() => {
+                        const hasSuccess = batchState.success > 0;
+                        const hasFailure = batchState.failure > 0;
+                        if (hasFailure && !batchState.handledFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+                        updateBatchStatus(true);
+                        setRunningNodeId(null);
+                    });
                     return;
                 }
 
@@ -2239,7 +2245,7 @@ function InfiniteCanvasPage() {
                     prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
                 );
             } finally {
-                setRunningNodeId(null);
+                if (!releaseRunningInBackground) setRunningNodeId(null);
             }
         },
         [effectiveConfig, handleAiRequestError, markReferenceRemoteUpload, message, openConfigDialog],
