@@ -1,18 +1,27 @@
 import type { NextRequest } from "next/server";
 
-import { getImageJob } from "@/server/image-jobs/store";
-
 export const runtime = "nodejs";
 
 type RouteContext = {
     params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: NextRequest, context: RouteContext) {
+function responseHeaders(response: Response) {
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("transfer-encoding");
+    return headers;
+}
+
+export async function GET(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
-    const job = getImageJob(id);
-    if (!job) {
-        return Response.json({ code: 1, data: null, msg: "Image job not found or expired" }, { status: 404 });
-    }
-    return Response.json({ code: 0, data: job, msg: "ok" });
+    const apiBaseUrl = process.env.API_BASE_URL || "http://127.0.0.1:8080";
+    const target = `${apiBaseUrl.replace(/\/$/, "")}/api/image-jobs/status/${encodeURIComponent(id)}${request.nextUrl.search}`;
+    const response = await fetch(target, { method: "GET", redirect: "manual" });
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders(response),
+    });
 }

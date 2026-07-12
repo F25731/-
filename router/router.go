@@ -26,6 +26,12 @@ func New() *gin.Engine {
 	api.POST("/balance", gin.WrapF(handler.Balance))
 	api.POST("/prompt/extract", gin.WrapF(handler.PromptExtract))
 	api.POST("/detail-llm", gin.WrapF(handler.DetailLLM))
+	api.POST("/image-jobs/:kind", func(c *gin.Context) {
+		handler.ImageJobCreate(c.Writer, c.Request, c.Param("kind"))
+	})
+	api.GET("/image-jobs/status/:id", func(c *gin.Context) {
+		handler.ImageJobStatus(c.Writer, c.Request, c.Param("id"))
+	})
 	v1 := api.Group("/v1", middleware.UserAuth)
 	v1.POST("/images/generations", gin.WrapF(handler.AIImagesGenerations))
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))

@@ -1,20 +1,62 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: infinite-canvas-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: infinite_canvas_root_2026
+      MYSQL_DATABASE: infinite_canvas
+      MYSQL_USER: canvas
+      MYSQL_PASSWORD: infinite_canvas_mysql_2026
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ucanvas -p$${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: infinite-canvas-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   app:
     build:
       context: .
       dockerfile: Dockerfile
     image: infinite-canvas:local
     container_name: infinite-canvas
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: infinite-canvas
       JWT_SECRET: infinite-canvas
       JWT_EXPIRE_HOURS: "168"
       PORT: "8080"
-      STORAGE_DRIVER: sqlite
-      DATABASE_DSN: data/infinite-canvas.db
+      STORAGE_DRIVER: mysql
+      DATABASE_DSN: canvas:infinite_canvas_mysql_2026@tcp(mysql:3306)/infinite_canvas?charset=utf8mb4&parseTime=True&loc=Local
+      LEGACY_SQLITE_DSN: data/infinite-canvas.db
+      REDIS_ADDR: redis:6379
     volumes:
       - ./data:/app/data
     ports:
       - "3001:3000"
     restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:

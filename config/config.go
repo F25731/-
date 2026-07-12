@@ -17,6 +17,10 @@ type Config struct {
 	JWTExpireHours      int    `env:"JWT_EXPIRE_HOURS" envDefault:"168"`
 	StorageDriver       string `env:"STORAGE_DRIVER" envDefault:"sqlite"`
 	DatabaseDSN         string `env:"DATABASE_DSN" envDefault:"data/infinite-canvas.db"`
+	LegacySQLiteDSN     string `env:"LEGACY_SQLITE_DSN" envDefault:"data/infinite-canvas.db"`
+	RedisAddr           string `env:"REDIS_ADDR" envDefault:"127.0.0.1:6379"`
+	RedisPassword       string `env:"REDIS_PASSWORD"`
+	RedisDB             int    `env:"REDIS_DB" envDefault:"0"`
 	PoolAPIBaseURL      string `env:"IMAGE_API_BASE_URL" envDefault:"https://api.zmoapi.cn"`
 	LinuxDoAuthorizeURL string `env:"LINUX_DO_AUTHORIZE_URL" envDefault:"https://connect.linux.do/oauth2/authorize"`
 	LinuxDoTokenURL     string `env:"LINUX_DO_TOKEN_URL" envDefault:"https://connect.linux.do/oauth2/token"`
