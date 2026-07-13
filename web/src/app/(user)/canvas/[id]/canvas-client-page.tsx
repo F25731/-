@@ -368,7 +368,6 @@ function InfiniteCanvasPage() {
                         },
                     })),
                     ),
-                ),
                 project.connections,
             );
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
