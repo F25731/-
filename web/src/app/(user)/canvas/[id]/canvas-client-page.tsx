@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Home, ImageIcon, Images, List, Menu, MessageSquare, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion, resumeImageJob } from "@/services/api/image";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
@@ -351,17 +351,25 @@ function InfiniteCanvasPage() {
 
         const restore = async () => {
             autoResumedNodeIdsRef.current = new Set();
-            const restoredNodes = await hydrateCanvasImages(
-                project.nodes.map((node) =>
-                    ({
+            const restoredNodes = settleRestoredParentNodes(
+                await hydrateCanvasImages(
+                    project.nodes.map((node) => ({
                         ...node,
                         metadata: {
                             ...node.metadata,
                             ...(node.type === CanvasNodeType.Config ? { generationMode: "image" as const } : {}),
-                            ...(node.metadata?.status === "loading" ? { resumeOnReload: true } : {}),
+                            ...(node.metadata?.status === "loading"
+                                ? node.type === CanvasNodeType.Image && node.metadata.imageJobId
+                                    ? { resumeOnReload: true }
+                                    : node.type === CanvasNodeType.Config
+                                      ? { resumeOnReload: undefined }
+                                      : { status: NODE_STATUS_ERROR, errorDetails: "任务已中断，请重新生成", resumeOnReload: undefined }
+                                : {}),
                         },
-                    }),
+                    })),
+                    ),
                 ),
+                project.connections,
             );
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
             setNodes(restoredNodes);
@@ -1815,16 +1823,19 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([childId]));
             setDialogNodeId(childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, remoteUrl: node.metadata.remoteUrl, storageKey: node.metadata.storageKey }]).then(
-                    (items) => items[0],
-                );
+                const image = await requestEdit(
+                    generationConfig,
+                    prompt,
+                    [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, remoteUrl: node.metadata.remoteUrl, storageKey: node.metadata.storageKey }],
+                    { onCreated: (imageJobId) => setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, imageJobId } } : item))) },
+                ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata, imageJobId: undefined, resumeOnReload: undefined } } : item)));
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 handleAiRequestError(error);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, resumeOnReload: undefined } } : item)));
             } finally {
                 setRunningNodeId(null);
             }
@@ -2162,9 +2173,10 @@ function InfiniteCanvasPage() {
                     const imageTasks = targetIds.map(async (targetId, index) => {
                             const plan = promptPlans[index] || rootPromptPlan;
                             try {
+                                const jobOptions = { onCreated: (imageJobId: string) => setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, imageJobId } } : node))) };
                                 const image = aiEditReferenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, plan.prompt, aiEditReferenceImages).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, plan.prompt).then((items) => items[0]);
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, plan.prompt, aiEditReferenceImages, jobOptions).then((items) => items[0])
+                                    : await requestGeneration({ ...generationConfig, count: "1" }, plan.prompt, jobOptions).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
@@ -2177,7 +2189,7 @@ function InfiniteCanvasPage() {
                                                 width: imageSize.width,
                                                 height: imageSize.height,
                                                 title: plan.title || node.title,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, prompt: plan.prompt, originalPrompt: effectivePrompt, primaryImageId: targetId },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, prompt: plan.prompt, originalPrompt: effectivePrompt, primaryImageId: targetId, imageJobId: undefined, resumeOnReload: undefined },
                                             };
                                         if (node.id === targetId)
                                             return {
@@ -2185,7 +2197,7 @@ function InfiniteCanvasPage() {
                                                 width: imageSize.width,
                                                 height: imageSize.height,
                                                 title: plan.title || node.title,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, prompt: plan.prompt, originalPrompt: effectivePrompt },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, prompt: plan.prompt, originalPrompt: effectivePrompt, imageJobId: undefined, resumeOnReload: undefined },
                                             };
                                         return node;
                                     });
@@ -2197,7 +2209,7 @@ function InfiniteCanvasPage() {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 batchState.handledFailure = handleAiRequestError(error) || batchState.handledFailure;
                                 batchState.failure += 1;
-                                setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                                setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails, resumeOnReload: undefined } } : node)));
                                 updateBatchStatus(false);
                                 return false;
                             }
@@ -2298,6 +2310,31 @@ function InfiniteCanvasPage() {
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
+            const resumableImageJobId = node.type === CanvasNodeType.Image && node.metadata?.status === NODE_STATUS_LOADING ? node.metadata.imageJobId?.trim() || "" : "";
+            if (resumableImageJobId) {
+                setRunningNodeId(node.id);
+                try {
+                    const image = await resumeImageJob(resumableImageJobId).then((items) => items[0]);
+                    const uploadedImage = await uploadImage(image.dataUrl);
+                    const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+                    const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === node.id
+                                ? { ...item, type: CanvasNodeType.Image, width: imageSize.width, height: imageSize.height, metadata: { ...item.metadata, ...imageMetadata(uploadedImage), imageJobId: undefined, resumeOnReload: undefined, errorDetails: undefined } }
+                                : item,
+                        ),
+                    );
+                } catch (error) {
+                    const errorDetails = error instanceof Error ? error.message : "图片任务恢复失败";
+                    if (!handleAiRequestError(error)) message.error(errorDetails);
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, resumeOnReload: undefined } } : item)));
+                } finally {
+                    setRunningNodeId(null);
+                }
+                return;
+            }
+
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
@@ -2357,7 +2394,8 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
-                const image = useReferenceImages ? await requestEdit(generationConfig, prompt, remoteRetryReferenceImages).then((items) => items[0]) : await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                const jobOptions = { onCreated: (imageJobId: string) => setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, imageJobId } } : item))) };
+                const image = useReferenceImages ? await requestEdit(generationConfig, prompt, remoteRetryReferenceImages, jobOptions).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, jobOptions).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
@@ -2372,7 +2410,7 @@ function InfiniteCanvasPage() {
                                   type: CanvasNodeType.Image,
                                   width: imageSize.width,
                                   height: imageSize.height,
-                                  metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata },
+                                  metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata, imageJobId: undefined, resumeOnReload: undefined },
                               }
                             : item,
                     ),
@@ -2380,7 +2418,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 if (!handleAiRequestError(error)) message.error(errorDetails);
-                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, resumeOnReload: undefined } } : item)));
             } finally {
                 setRunningNodeId(null);
             }
@@ -2390,14 +2428,10 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded) return;
-        const resumableNodes = nodes.filter((node) => isAutoResumableLoadingNode(node, nodes) && !autoResumedNodeIdsRef.current.has(node.id));
+        const resumableNodes = nodes.filter((node) => isAutoResumableLoadingNode(node) && !autoResumedNodeIdsRef.current.has(node.id));
         if (!resumableNodes.length) return;
         resumableNodes.forEach((node) => autoResumedNodeIdsRef.current.add(node.id));
-        void (async () => {
-            for (const node of resumableNodes) {
-                await handleRetryNode(node);
-            }
-        })();
+        void Promise.allSettled(resumableNodes.map((node) => handleRetryNode(node))).then(() => setNodes((prev) => settleRestoredParentNodes(prev, connectionsRef.current)));
     }, [handleRetryNode, nodes, projectLoaded]);
 
     const generateImageFromTextNode = useCallback(
@@ -3264,15 +3298,22 @@ function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connection
     return null;
 }
 
-function isAutoResumableLoadingNode(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+function isAutoResumableLoadingNode(node: CanvasNodeData) {
     if (node.metadata?.status !== "loading") return false;
     if (!node.metadata?.resumeOnReload) return false;
-    if (node.type === CanvasNodeType.Config) return false;
-    if (node.type === CanvasNodeType.Image && node.metadata?.isBatchRoot) {
-        const childIds = node.metadata.batchChildIds || [];
-        if (childIds.some((childId) => nodes.some((item) => item.id === childId && item.metadata?.status === "loading"))) return false;
-    }
+    if (node.type !== CanvasNodeType.Image || !node.metadata.imageJobId) return false;
     return Boolean(node.metadata?.prompt);
+}
+
+function settleRestoredParentNodes(nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    return nodes.map((node) => {
+        if (node.metadata?.status !== NODE_STATUS_LOADING || node.type !== CanvasNodeType.Config) return node;
+        const targetIds = connections.filter((connection) => connection.fromNodeId === node.id).map((connection) => connection.toNodeId);
+        const targets = nodes.filter((item) => targetIds.includes(item.id));
+        if (targets.some((item) => item.metadata?.status === NODE_STATUS_SUCCESS || Boolean(item.metadata?.content))) return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, resumeOnReload: undefined } };
+        if (targets.length && targets.every((item) => item.metadata?.status === NODE_STATUS_ERROR)) return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败", resumeOnReload: undefined } };
+        return node;
+    });
 }
 
 function sourceNodeReferenceImages(node: CanvasNodeData | null) {

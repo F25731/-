@@ -32,6 +32,9 @@ func New() *gin.Engine {
 	api.GET("/image-jobs/status/:id", func(c *gin.Context) {
 		handler.ImageJobStatus(c.Writer, c.Request, c.Param("id"))
 	})
+	api.GET("/image-jobs/result/:id/:index", func(c *gin.Context) {
+		handler.ImageJobResult(c.Writer, c.Request, c.Param("id"), c.Param("index"))
+	})
 	v1 := api.Group("/v1", middleware.UserAuth)
 	v1.POST("/images/generations", gin.WrapF(handler.AIImagesGenerations))
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))

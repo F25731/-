@@ -51,6 +51,7 @@ export type CanvasNodeMetadata = {
     remoteUrl?: string;
     mimeType?: string;
     bytes?: number;
+    imageJobId?: string;
     resumeOnReload?: boolean;
 };
 
@@ -126,4 +127,3 @@ export type ContextMenuState = {
     y: number;
     nodeId: string;
 };
-

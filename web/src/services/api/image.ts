@@ -48,7 +48,7 @@ const MAX_IMAGE_GENERATION_COUNT = 8;
 const ALLOWED_REQUEST_SIZES = new Set(DEFAULT_IMAGE_ASPECT_VALUES);
 const IMAGE_JOB_CREATE_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 10 * 60_000;
-const IMAGE_JOB_POLL_INTERVAL_MS = 2_500;
+const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 type ImageJobStatus = "pending" | "running" | "succeeded" | "failed";
@@ -71,6 +71,10 @@ type ImageJobStatusResponse = {
         error?: string;
     };
     msg?: string;
+};
+
+type ImageJobRequestOptions = {
+    onCreated?: (jobId: string) => void;
 };
 
 function normalizeQuality(_quality: string) {
@@ -110,11 +114,11 @@ function resolveRequestSize(quality: string | undefined, size: string) {
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
-    if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
-    }
     if (typeof item.url === "string" && item.url) {
         return item.url;
+    }
+    if (typeof item.b64_json === "string" && item.b64_json) {
+        return `data:image/png;base64,${item.b64_json}`;
     }
     return null;
 }
@@ -248,7 +252,7 @@ function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) 
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string) {
+export async function requestGeneration(config: AiConfig, prompt: string, options?: ImageJobRequestOptions) {
     const n = Math.max(1, Math.min(MAX_IMAGE_GENERATION_COUNT, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
@@ -263,6 +267,7 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
                 ...(requestSize ? { size: requestSize } : {}),
             },
             aiHeaders(config, "application/json"),
+            options,
         );
         return images;
     } catch (error) {
@@ -270,7 +275,7 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[]) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: ImageJobRequestOptions) {
     const n = Math.max(1, Math.min(MAX_IMAGE_GENERATION_COUNT, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
@@ -292,6 +297,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     .map((image_url) => ({ image_url })),
             },
             aiHeaders(config, "application/json"),
+            options,
         );
         return images;
     } catch (error) {
@@ -299,7 +305,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
-async function requestImageJob(kind: "generations" | "edits", body: unknown, headers?: ReturnType<typeof aiHeaders>) {
+async function requestImageJob(kind: "generations" | "edits", body: unknown, headers?: ReturnType<typeof aiHeaders>, options?: ImageJobRequestOptions) {
     const created = await axios.post<ImageJobCreateResponse>(`/api/image-jobs/${kind}`, body, {
         headers,
         timeout: IMAGE_JOB_CREATE_TIMEOUT_MS,
@@ -309,7 +315,16 @@ async function requestImageJob(kind: "generations" | "edits", body: unknown, hea
     if (created.status < 200 || created.status >= 300 || created.data?.code !== 0 || !jobId) {
         throw new Error(created.data?.msg || "Image job creation failed");
     }
+    options?.onCreated?.(jobId);
     return pollImageJob(jobId);
+}
+
+export async function resumeImageJob(jobId: string) {
+    try {
+        return await pollImageJob(jobId);
+    } catch (error) {
+        throw normalizeAiError(error, "图片任务恢复失败");
+    }
 }
 
 async function pollImageJob(jobId: string) {
@@ -429,4 +444,3 @@ export async function fetchImageModels(config: AiConfig) {
         throw normalizeAiError(error, "读取模型失败");
     }
 }
-

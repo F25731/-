@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -34,18 +36,23 @@ const (
 
 type ImageJob struct {
 	ID        string         `json:"id"`
-	Status    ImageJobStatus  `json:"status"`
+	Status    ImageJobStatus `json:"status"`
 	Data      any            `json:"data,omitempty"`
 	Error     string         `json:"error,omitempty"`
+	WorkerID  string         `json:"workerId,omitempty"`
 	CreatedAt int64          `json:"createdAt"`
 	UpdatedAt int64          `json:"updatedAt"`
 }
 
 const (
-	imageJobTTL        = 30 * time.Minute
-	imageJobKeyPrefix  = "image-job:"
-	imageJobKindImages = "generations"
-	imageJobKindEdits  = "edits"
+	imageJobTTL             = 30 * time.Minute
+	imageJobKeyPrefix       = "image-job:"
+	imageJobResultKeyPrefix = "image-job-result:"
+	imageJobWorkerKeyPrefix = "image-job-worker:"
+	imageJobKindImages      = "generations"
+	imageJobKindEdits       = "edits"
+	imageJobWorkerTTL       = 8 * time.Second
+	imageJobHeartbeat       = 2 * time.Second
 )
 
 const (
@@ -74,6 +81,8 @@ var (
 	}
 	imageJobModeCache              sync.Map
 	imageJobReferenceDownloadSlots = make(chan struct{}, 512)
+	imageJobWorkerID               = randomImageJobID()
+	imageJobWorkerOnce             sync.Once
 )
 
 type imageJobRequest struct {
@@ -90,6 +99,12 @@ type imageJobRequest struct {
 type imageJobRequestModeCacheEntry struct {
 	Mode      string
 	ExpiresAt time.Time
+}
+
+type imageJobStoredResult struct {
+	Index       int
+	ContentType string
+	Data        []byte
 }
 
 func CreateImageJob(request *http.Request, kind string, body []byte) (ImageJob, error) {
@@ -118,7 +133,59 @@ func CreateImageJob(request *http.Request, kind string, body []byte) (ImageJob, 
 }
 
 func GetImageJob(id string) (ImageJob, bool, error) {
-	return loadImageJob(id)
+	job, ok, err := loadImageJob(id)
+	if err != nil || !ok || (job.Status != ImageJobPending && job.Status != ImageJobRunning) || job.WorkerID == imageJobWorkerID {
+		return job, ok, err
+	}
+	alive, err := imageJobWorkerAlive(job.WorkerID)
+	if err != nil || alive {
+		return job, ok, err
+	}
+	job.Status = ImageJobFailed
+	job.Error = "图片任务执行服务已重启，请重新生成"
+	job.UpdatedAt = time.Now().UnixMilli()
+	if err := saveImageJob(job); err != nil {
+		return ImageJob{}, false, err
+	}
+	return job, true, nil
+}
+
+func StartImageJobWorker() {
+	imageJobWorkerOnce.Do(func() {
+		writeImageJobWorkerHeartbeat()
+		go func() {
+			ticker := time.NewTicker(imageJobHeartbeat)
+			defer ticker.Stop()
+			for range ticker.C {
+				writeImageJobWorkerHeartbeat()
+			}
+		}()
+	})
+}
+
+func writeImageJobWorkerHeartbeat() {
+	client, err := repository.Redis()
+	if err == nil {
+		err = client.Set(backgroundContext(), imageJobWorkerKey(imageJobWorkerID), []byte("1"), imageJobWorkerTTL)
+	}
+	if err != nil {
+		log.Printf("image job worker heartbeat failed: %v", err)
+	}
+}
+
+func imageJobWorkerAlive(workerID string) (bool, error) {
+	if workerID == "" {
+		return false, nil
+	}
+	client, err := repository.Redis()
+	if err != nil {
+		return false, err
+	}
+	_, err = client.Get(backgroundContext(), imageJobWorkerKey(workerID))
+	if err == repository.ErrRedisNil {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func runImageJob(id string, jobRequest imageJobRequest) {
@@ -133,11 +200,137 @@ func runImageJob(id string, jobRequest imageJobRequest) {
 		})
 		return
 	}
+	payload, results, err := compactImageJobPayload(id, payload)
+	if err == nil {
+		err = saveImageJobResults(id, results)
+	}
+	if err != nil {
+		_ = updateImageJob(id, func(job *ImageJob) {
+			job.Status = ImageJobFailed
+			job.Error = err.Error()
+		})
+		return
+	}
 	_ = updateImageJob(id, func(job *ImageJob) {
 		job.Status = ImageJobSucceeded
 		job.Data = payload
 		job.Error = ""
 	})
+}
+
+func GetImageJobResult(id string, index int) ([]byte, string, bool, error) {
+	client, err := repository.Redis()
+	if err != nil {
+		return nil, "", false, err
+	}
+	payload, err := client.Get(backgroundContext(), imageJobResultKey(id, index))
+	if err == repository.ErrRedisNil {
+		return nil, "", false, nil
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	contentType, data, ok := unpackImageJobResult(payload)
+	if !ok {
+		return nil, "", false, safeMessageError{message: "invalid image job result"}
+	}
+	return data, contentType, true, nil
+}
+
+func compactImageJobPayload(id string, payload any) (any, []imageJobStoredResult, error) {
+	object, ok := payload.(map[string]any)
+	if !ok {
+		return payload, nil, nil
+	}
+	items, ok := object["data"].([]any)
+	if !ok {
+		return payload, nil, nil
+	}
+
+	results := []imageJobStoredResult{}
+	for index, value := range items {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		encoded, _ := item["b64_json"].(string)
+		encoded = strings.TrimSpace(encoded)
+		if encoded == "" {
+			delete(item, "b64_json")
+			continue
+		}
+		if imageURL, _ := item["url"].(string); strings.TrimSpace(imageURL) != "" {
+			delete(item, "b64_json")
+			continue
+		}
+
+		data, contentType, err := decodeImageJobBase64(encoded)
+		if err != nil {
+			return nil, nil, safeMessageError{message: "invalid base64 image result"}
+		}
+		results = append(results, imageJobStoredResult{Index: index, ContentType: contentType, Data: data})
+		item["url"] = fmt.Sprintf("/api/image-jobs/result/%s/%d", id, index)
+		delete(item, "b64_json")
+	}
+	return payload, results, nil
+}
+
+func saveImageJobResults(id string, results []imageJobStoredResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	client, err := repository.Redis()
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		if err := client.Set(backgroundContext(), imageJobResultKey(id, result.Index), packImageJobResult(result.ContentType, result.Data), imageJobTTL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func decodeImageJobBase64(value string) ([]byte, string, error) {
+	contentType := ""
+	if strings.HasPrefix(value, "data:") {
+		header, encoded, ok := strings.Cut(value, ",")
+		if !ok || !strings.Contains(header, ";base64") {
+			return nil, "", errors.New("invalid data url")
+		}
+		contentType = strings.TrimPrefix(strings.SplitN(header, ";", 2)[0], "data:")
+		value = encoded
+	}
+	data, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(value)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		contentType = "image/png"
+	}
+	return data, contentType, nil
+}
+
+func packImageJobResult(contentType string, data []byte) []byte {
+	return append([]byte(contentType+"\n"), data...)
+}
+
+func unpackImageJobResult(payload []byte) (string, []byte, bool) {
+	index := bytes.IndexByte(payload, '\n')
+	if index <= 0 || index == len(payload)-1 {
+		return "", nil, false
+	}
+	contentType := string(payload[:index])
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", nil, false
+	}
+	return contentType, payload[index+1:], true
 }
 
 func forwardPoolImageRequest(jobRequest imageJobRequest) (any, error) {
@@ -495,7 +688,7 @@ func imageJobTargetPath(kind string) string {
 
 func newImageJob() ImageJob {
 	now := time.Now().UnixMilli()
-	return ImageJob{ID: randomImageJobID(), Status: ImageJobPending, CreatedAt: now, UpdatedAt: now}
+	return ImageJob{ID: randomImageJobID(), Status: ImageJobPending, WorkerID: imageJobWorkerID, CreatedAt: now, UpdatedAt: now}
 }
 
 func saveImageJob(job ImageJob) error {
@@ -541,6 +734,14 @@ func updateImageJob(id string, mutate func(*ImageJob)) error {
 
 func imageJobKey(id string) string {
 	return imageJobKeyPrefix + id
+}
+
+func imageJobResultKey(id string, index int) string {
+	return fmt.Sprintf("%s%s:%d", imageJobResultKeyPrefix, id, index)
+}
+
+func imageJobWorkerKey(id string) string {
+	return imageJobWorkerKeyPrefix + id
 }
 
 func randomImageJobID() string {

@@ -94,12 +94,14 @@ type CanvasNodeMetadata = {
   storageKey?: string;
   mimeType?: string;
   bytes?: number;
+  imageJobId?: string;
+  resumeOnReload?: boolean;
 };
 ```
 
 不同节点的使用方式：
 
-- 图片节点：`content` 是当前可展示的图片 URL，通常是 `blob:` URL；`storageKey` 指向本地图片 Blob；`naturalWidth/naturalHeight/bytes/mimeType` 保存原图信息。
+- 图片节点：`content` 是当前可展示的图片 URL，通常是 `blob:` URL；`storageKey` 指向本地图片 Blob；`naturalWidth/naturalHeight/bytes/mimeType` 保存原图信息；生成期间用 `imageJobId/resumeOnReload` 保存可恢复任务，刷新后继续轮询原任务而不重复生成。
 - 视频节点：`content` 是当前可播放的视频 URL，通常是 `blob:` URL；`storageKey` 指向本地视频 Blob；`bytes/mimeType` 保存文件信息。
 - 文本节点：`content` 保存文本内容；`fontSize` 保存字体大小；`prompt/status/errorDetails` 保存生成状态。
 - 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本、图片或视频；上游输入通过 `connections` 计算。
