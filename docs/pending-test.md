@@ -78,3 +78,5 @@
 - 余额查询兼容上游返回的 `unlimitedQuota` 字段；无限额度 Key 不再误判为密钥限额，不会显示密钥名和 `$0`，会回到显示客户名和客户实际余额。
 - 画布生图任务状态从 Next.js 内存 Map 改为 Go 后端 + Redis 保存，`/api/image-jobs` 创建和状态查询仍保持原接口；Docker Compose 默认增加 MySQL 主库和 Redis，启动 MySQL 时会从旧 `data/infinite-canvas.db` 按主键导入已有后台数据，避免切库后配置丢失。
 - MySQL 自动迁移兼容带索引的字符串字段，用户、积分日志、提示词、素材、后台模型和系统配置的主键/索引字段会使用固定长度 `varchar`，避免建表时被映射为 `longtext` 导致后端启动失败。
+
+- 画布图片任务池不再盲目透传图片编辑请求：Go 后端会把 JSON 请求统一按 `application/json` 转发；带参考图的 `/images/edits` 如果遇到 `multipart boundary not found`、`image_url fetch failed` 等明确格式/拉图错误，会下载图床参考图并流式重组为标准 multipart 请求，成功后按接口地址、模型和客户 Key 短期记住最佳请求模式；524、超时、断连等不确定是否已生成的错误不会自动重试，避免重复扣费。

@@ -145,6 +145,19 @@ function requestErrorKind(status: number | undefined, message: string): AiReques
     return "other";
 }
 
+function friendlyAiErrorMessage(message: string) {
+    const text = message.toLowerCase();
+    if (text.includes("multipart boundary not found") || text.includes("missing boundary")) return "参考图请求格式不兼容，请重新生成";
+    if (text.includes("image_url fetch failed") || text.includes("failed to fetch image") || text.includes("unable to fetch image")) return "参考图链接无法访问，请重新上传参考图";
+    if (text.includes("reference image download failed")) return "参考图下载失败，请重新上传参考图";
+    if (text.includes("reference image url is not accessible")) return "参考图链接无法访问，请重新上传参考图";
+    if (text.includes("reference image is too large")) return "参考图文件过大，请换一张参考图";
+    if (text.includes("524") || text.includes("timeout") || text.includes("deadline exceeded")) return "上游生成超时，请稍后重试";
+    if (text.includes("connection reset")) return "上游连接中断，请稍后重试";
+    if (text === "openai_error") return "上游生成失败，请稍后重试";
+    return message;
+}
+
 function readResponseErrorMessage(data: unknown) {
     if (!data || typeof data !== "object") return "";
     const payload = data as { detail?: string | { error?: string }; error?: { message?: string } | string; msg?: string; message?: string };
@@ -163,14 +176,15 @@ function normalizeAiError(error: unknown, fallback: string) {
         }
         const responseData = error.response?.data;
         const status = error.response?.status;
-        const message = readResponseErrorMessage(responseData) || (status ? `${fallback}：${status}` : fallback);
+        const rawMessage = readResponseErrorMessage(responseData) || (status ? `${fallback}：${status}` : fallback);
+        const message = friendlyAiErrorMessage(rawMessage);
         const kind = requestErrorKind(status, message);
         if (kind === "auth") return new AiRequestError("API Key 无效或已失效", "auth", status);
         if (kind === "quota") return new AiRequestError("余额不足或配额已用完", "quota", status);
         if (kind === "upstream_auth") return new AiRequestError("上游认证失败", "upstream_auth", status);
         return new AiRequestError(message, "other", status);
     }
-    const message = error instanceof Error ? error.message : fallback;
+    const message = friendlyAiErrorMessage(error instanceof Error ? error.message : fallback);
     const kind = requestErrorKind(undefined, message);
     if (kind === "auth") return new AiRequestError("API Key 无效或已失效", "auth");
     if (kind === "quota") return new AiRequestError("余额不足或配额已用完", "quota");
