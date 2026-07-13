@@ -522,10 +522,22 @@ export default function DetailWorkbenchPage() {
         } else {
             failed += 1;
         }
-        setStatusText("粗糙模式：正在并发生成其余屏");
-        const results = await Promise.all(sourcePlan.screens.slice(1).map((screen) => generateScreen(screen.index, sourceScreens, sourcePlan, { mode: "rough", throwOnError: false })));
-        success += results.filter((result) => result?.imageUrl).length;
-        failed += results.filter((result) => !result?.imageUrl).length;
+        const remainingScreens = sourcePlan.screens.slice(1);
+        if (!remainingScreens.length) return { success, failed };
+        const total = sourcePlan.screens.length;
+        setStatusText(`粗糙模式：已完成 ${success} 屏，正在并发生成其余 ${remainingScreens.length} 屏`);
+        await Promise.all(
+            remainingScreens.map(async (screen) => {
+                const generated = await generateScreen(screen.index, sourceScreens, sourcePlan, { mode: "rough", throwOnError: false });
+                if (generated?.imageUrl) {
+                    success += 1;
+                } else {
+                    failed += 1;
+                }
+                setStatusText(`粗糙模式：已完成 ${success} / ${total} 屏${failed ? `，失败 ${failed} 屏` : ""}`);
+                return generated;
+            }),
+        );
         return { success, failed };
     };
 

@@ -10,7 +10,7 @@ import { AiRequestError, requestEdit, requestGeneration, requestImageQuestion } 
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { ensureReferenceImagesRemoteUrls, imageAiUrl, uploadReferenceImage } from "@/services/image-bed";
+import { ensureReferenceImageRemoteUrl, ensureReferenceImagesRemoteUrls, imageAiUrl, uploadReferenceImage } from "@/services/image-bed";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -1142,6 +1142,43 @@ function InfiniteCanvasPage() {
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
+    const persistReferenceRemoteUrls = useCallback((images: ReferenceImage[]) => {
+        const remoteById = new Map(images.filter((image) => image.id && image.remoteUrl).map((image) => [image.id, image.remoteUrl!]));
+        if (!remoteById.size) return;
+        setNodes((prev) =>
+            prev.map((node) =>
+                node.type === CanvasNodeType.Image && remoteById.has(node.id)
+                    ? {
+                          ...node,
+                          metadata: {
+                              ...node.metadata,
+                              remoteUrl: remoteById.get(node.id),
+                          },
+                      }
+                    : node,
+            ),
+        );
+    }, []);
+
+    const ensureCanvasNodeRemoteUrl = useCallback(
+        async (nodeId: string, image: UploadedImage & { remoteUrl?: string }, name = "reference.png") => {
+            if (!image.storageKey || image.remoteUrl) return;
+            try {
+                const remoteImage = await ensureReferenceImageRemoteUrl({
+                    id: nodeId,
+                    name,
+                    type: image.mimeType || "image/png",
+                    dataUrl: image.url,
+                    storageKey: image.storageKey,
+                });
+                persistReferenceRemoteUrls([remoteImage]);
+            } catch {
+                // Local canvas images remain usable; generation will show an upload error if the image is used as a reference.
+            }
+        },
+        [persistReferenceRemoteUrls],
+    );
+
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
         const image = await uploadImage(file);
         const size = fitNodeSize(image.width, image.height);
@@ -1160,7 +1197,8 @@ function InfiniteCanvasPage() {
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
-    }, []);
+        void ensureCanvasNodeRemoteUrl(id, image, file.name);
+    }, [ensureCanvasNodeRemoteUrl]);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video");
@@ -1191,6 +1229,7 @@ function InfiniteCanvasPage() {
         const cellWidth = 700;
         const cellHeight = 700;
         const imageFileCount = validFiles.filter((file) => file.type.startsWith("image/")).length;
+        const imageUploads: Array<{ id: string; image: UploadedImage; name: string }> = [];
         const nodes = await Promise.all(
             validFiles.map(async (file, index) => {
                 const column = index % columns;
@@ -1216,8 +1255,10 @@ function InfiniteCanvasPage() {
 
                 const image = await uploadImage(file);
                 const nodeSize = fitNodeSize(image.width, image.height);
+                const id = `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+                imageUploads.push({ id, image, name: file.name });
                 return {
-                    id: `image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                    id,
                     type: CanvasNodeType.Image,
                     title: file.name,
                     position: { x: center.x - nodeSize.width / 2, y: center.y - nodeSize.height / 2 },
@@ -1252,11 +1293,12 @@ function InfiniteCanvasPage() {
         const connections = configNode ? nodes.filter((node) => node.type === CanvasNodeType.Image).map((node) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: configNode.id })) : [];
 
         setNodes((prev) => (configNode ? [...prev, ...nodes, configNode] : [...prev, ...nodes]));
+        imageUploads.forEach((item) => void ensureCanvasNodeRemoteUrl(item.id, item.image, item.name));
         if (connections.length) setConnections((prev) => [...prev, ...connections]);
         setSelectedNodeIds(new Set(configNode ? [configNode.id] : ids));
         setSelectedConnectionId(null);
         setDialogNodeId(configNode?.id || ids[0] || null);
-    }, [effectiveConfig]);
+    }, [effectiveConfig, ensureCanvasNodeRemoteUrl]);
 
     const currentReferenceLimit = useCallback(
         (node: CanvasNodeData | undefined) => {
@@ -1737,7 +1779,8 @@ function InfiniteCanvasPage() {
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
         setCropNodeId(null);
-    }, []);
+        void ensureCanvasNodeRemoteUrl(childId, image, "cropped-image.png");
+    }, [ensureCanvasNodeRemoteUrl]);
 
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
@@ -1874,6 +1917,7 @@ function InfiniteCanvasPage() {
                             : node,
                     ),
                 );
+                void ensureCanvasNodeRemoteUrl(target.nodeId, image, file.name);
                 if (extraFiles.length) await createFileNodes(extraFiles, extraPosition);
                 else {
                     setSelectedNodeIds(new Set([target.nodeId]));
@@ -1888,7 +1932,7 @@ function InfiniteCanvasPage() {
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [addReferenceImagesToNode, createFileNodes, message, screenToCanvas, size.height, size.width],
+        [addReferenceImagesToNode, createFileNodes, ensureCanvasNodeRemoteUrl, message, screenToCanvas, size.height, size.width],
     );
 
     const handleDrop = useCallback(
@@ -2004,6 +2048,7 @@ function InfiniteCanvasPage() {
                               throw error;
                           })
                         : [];
+                    persistReferenceRemoteUrls(aiEditReferenceImages);
                     if (referencesNeedingUpload.length) markReferenceRemoteUpload(referencesNeedingUpload, NODE_STATUS_SUCCESS);
                     const generationType = aiEditReferenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, aiEditReferenceImages);
@@ -2248,7 +2293,7 @@ function InfiniteCanvasPage() {
                 if (!releaseRunningInBackground) setRunningNodeId(null);
             }
         },
-        [effectiveConfig, handleAiRequestError, markReferenceRemoteUpload, message, openConfigDialog],
+        [effectiveConfig, handleAiRequestError, markReferenceRemoteUpload, message, openConfigDialog, persistReferenceRemoteUrls],
     );
 
     const handleRetryNode = useCallback(
@@ -2293,6 +2338,8 @@ function InfiniteCanvasPage() {
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
 
             try {
+                const remoteRetryReferenceImages = useReferenceImages && retryReferenceImages?.length ? await ensureReferenceImagesRemoteUrls(retryReferenceImages) : retryReferenceImages || [];
+                persistReferenceRemoteUrls(remoteRetryReferenceImages);
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
                     let streamed = "";
@@ -2304,19 +2351,19 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await uploadMediaFile(await requestVideoGeneration(generationConfig, prompt, retryReferenceImages || []), "video");
+                    const video = await uploadMediaFile(await requestVideoGeneration(generationConfig, prompt, remoteRetryReferenceImages), "video");
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality } } : item)));
                     return;
                 }
 
-                const image = useReferenceImages ? await requestEdit(generationConfig, prompt, retryReferenceImages).then((items) => items[0]) : await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                const image = useReferenceImages ? await requestEdit(generationConfig, prompt, remoteRetryReferenceImages).then((items) => items[0]) : await requestGeneration(generationConfig, prompt).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
                     ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, size: generationConfig.size, quality: generationConfig.quality, imageTier: generationConfig.imageTier, count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
-                    : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
+                    : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, remoteRetryReferenceImages);
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -2338,7 +2385,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, handleAiRequestError, message, openConfigDialog],
+        [effectiveConfig, handleAiRequestError, message, openConfigDialog, persistReferenceRemoteUrls],
     );
 
     useEffect(() => {
@@ -2418,8 +2465,9 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([id]));
             setSelectedConnectionId(null);
             setDialogNodeId(id);
+            void ensureCanvasNodeRemoteUrl(id, { ...storedImage, width: meta.width, height: meta.height }, `${image.prompt.slice(0, 24) || "asset"}.png`);
         },
-        [message, screenToCanvas, size.height, size.width],
+        [ensureCanvasNodeRemoteUrl, message, screenToCanvas, size.height, size.width],
     );
 
     const insertAssistantText = useCallback(
@@ -3011,8 +3059,8 @@ function fileExtension(mimeType = "", url = "") {
     return imageExtension(url);
 }
 
-function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
-    return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
+function imageMetadata(image: UploadedImage & { remoteUrl?: string }): CanvasNodeMetadata {
+    return { content: image.url, storageKey: image.storageKey, remoteUrl: image.remoteUrl, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
 }
 
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
