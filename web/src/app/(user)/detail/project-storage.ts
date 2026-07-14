@@ -24,8 +24,8 @@ export function serializeDetailProjects<T extends { references?: Array<Record<st
         screens: (project.screens || []).map((screen) => ({
             ...screen,
             imageUrl: screen.storageKey ? "" : stableImageValue(screen.imageUrl),
-            status: screen.status === "generating" ? "failed" : screen.status,
-            error: screen.status === "generating" ? "上次生成中断，请重新生成" : screen.error,
+            status: screen.status === "generating" && !screen.imageJobId ? "failed" : screen.status,
+            error: screen.status === "generating" && !screen.imageJobId ? "上次生成中断且没有可恢复任务，请重新生成" : screen.error,
         })),
     }));
 }

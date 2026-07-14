@@ -10,7 +10,7 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { fetchPublicModels, type AdminModel } from "@/services/api/admin";
-import { requestEdit, requestGeneration, requestPromptExtraction } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestPromptExtraction, resumeImageJob } from "@/services/api/image";
 import { uploadReferenceImage } from "@/services/image-bed";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -44,10 +44,18 @@ type DetailScreen = DetailPlanScreen & {
     storageKey?: string;
     status: "not_started" | "generating" | "ready" | "failed";
     error?: string;
+    feedbackDraft?: string;
+    pendingPrompt?: string;
+    pendingStyleSummary?: string;
+    imageJobId?: string;
+    attemptId?: string;
+    attemptMode?: DetailGenerationMode;
+    needsReview?: boolean;
 };
 
 type DetailLlmKeys = Record<string, string>;
 type DetailGenerationMode = "precise" | "rough";
+type DetailPreciseExecutionMode = "step" | "continuous";
 type DetailGenerationResult = { success: number; failed: number; stoppedAt?: number };
 
 type DetailProject = {
@@ -63,6 +71,8 @@ type DetailProject = {
     plan: DetailPlan | null;
     screens: DetailScreen[];
     currentIndex: number;
+    generationMode?: DetailGenerationMode;
+    preciseExecutionMode?: DetailPreciseExecutionMode;
 };
 
 const DETAIL_LLM_KEYS_KEY = "detail-workbench:llm-keys";
@@ -81,6 +91,9 @@ export default function DetailWorkbenchPage() {
     const copyText = useCopyText();
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const screensRef = useRef<DetailScreen[]>([]);
+    const projectsRef = useRef<DetailProject[]>([]);
+    const resumedProjectIdsRef = useRef(new Set<string>());
     const activeProjectIdRef = useRef<string | null>(null);
     const currentReplaceInputRef = useRef<HTMLInputElement | null>(null);
     const addScreenUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -101,7 +114,6 @@ export default function DetailWorkbenchPage() {
     const [plan, setPlan] = useState<DetailPlan | null>(null);
     const [screens, setScreens] = useState<DetailScreen[]>([]);
     const [currentIndex, setCurrentIndex] = useState(1);
-    const [feedback, setFeedback] = useState("");
     const [isRunning, setIsRunning] = useState(false);
     const [statusText, setStatusText] = useState("");
     const [planEditorOpen, setPlanEditorOpen] = useState(false);
@@ -109,6 +121,9 @@ export default function DetailWorkbenchPage() {
     const [draftStyleSummary, setDraftStyleSummary] = useState("");
     const [draftScreens, setDraftScreens] = useState<DetailPlanScreen[]>([]);
     const [generationModeOpen, setGenerationModeOpen] = useState(false);
+    const [preciseModeOpen, setPreciseModeOpen] = useState(false);
+    const [generationMode, setGenerationMode] = useState<DetailGenerationMode>("precise");
+    const [preciseExecutionMode, setPreciseExecutionMode] = useState<DetailPreciseExecutionMode>("continuous");
     const [addScreenOpen, setAddScreenOpen] = useState(false);
     const [addScreenPrompt, setAddScreenPrompt] = useState("");
     const [previewOpen, setPreviewOpen] = useState(false);
@@ -116,15 +131,20 @@ export default function DetailWorkbenchPage() {
     const [previewScale, setPreviewScale] = useState(1);
 
     const currentScreen = screens.find((screen) => screen.index === currentIndex) || null;
+    const feedback = currentScreen?.feedbackDraft || "";
     const generatedScreens = screens.filter((screen) => screen.imageUrl);
     const failedScreens = screens.filter((screen) => screen.status === "failed");
     const generatingScreen = screens.find((screen) => screen.status === "generating") || null;
+    const hasUnfinishedAfterCurrent = Boolean(currentScreen && screens.some((screen) => screen.index > currentScreen.index && screen.status === "not_started" && !screen.imageUrl));
     const hasReferenceUploading = references.some((reference) => reference.uploadStatus === "uploading");
     const hasReferenceUploadFailed = references.some((reference) => reference.uploadStatus === "failed");
     const activeProject = projects.find((project) => project.id === activeProjectId) || null;
     const selectedLlm = llmModels.find((model) => model.id === selectedLlmId) || llmModels[0] || null;
     const selectedLlmKey = selectedLlm ? llmKeys[selectedLlm.id]?.trim() || "" : "";
     const imageConfig = useMemo(() => ({ ...effectiveConfig, model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" }), [effectiveConfig]);
+
+    screensRef.current = screens;
+    projectsRef.current = projects;
 
     useEffect(() => {
         void loadLlmModels();
@@ -175,13 +195,70 @@ export default function DetailWorkbenchPage() {
                           plan,
                           screens,
                           currentIndex,
+                          generationMode,
+                          preciseExecutionMode,
                       }
                     : project,
             );
             scheduleProjectSave(next);
             return next;
         });
-    }, [projectReady, activeProjectId, references, productInfo, styleRequest, platform, screenCount, plan, screens, currentIndex]);
+    }, [projectReady, activeProjectId, references, productInfo, styleRequest, platform, screenCount, plan, screens, currentIndex, generationMode, preciseExecutionMode]);
+
+    useEffect(() => {
+        if (!projectReady || !activeProjectId || resumedProjectIdsRef.current.has(activeProjectId)) return;
+        const pendingJobs = screens.filter((screen) => screen.imageJobId && screen.attemptId && screen.status === "generating");
+        if (!pendingJobs.length) return;
+        const resumedProjectId = activeProjectId;
+        resumedProjectIdsRef.current.add(activeProjectId);
+        setIsRunning(true);
+        setStatusText(`正在恢复 ${pendingJobs.length} 个详情图任务`);
+        void Promise.allSettled(
+            pendingJobs.map(async (screen) => {
+                try {
+                    const images = await resumeImageJob(screen.imageJobId!);
+                    const uploaded = await uploadImage(images[0].dataUrl);
+                    if (activeProjectIdRef.current !== resumedProjectId) return;
+                    const latest = screensRef.current.find((item) => item.index === screen.index);
+                    if (latest?.attemptId !== screen.attemptId || latest.imageJobId !== screen.imageJobId) return;
+                    updateScreen(
+                        screen.index,
+                        {
+                            prompt: screen.pendingPrompt || screen.prompt,
+                            pendingPrompt: undefined,
+                            pendingStyleSummary: undefined,
+                            imageUrl: uploaded.url,
+                            storageKey: uploaded.storageKey,
+                            status: "ready",
+                            error: undefined,
+                            imageJobId: undefined,
+                        },
+                        true,
+                    );
+                    setPlan((current) =>
+                        current
+                            ? {
+                                  ...current,
+                                  styleSummary: screen.pendingStyleSummary || current.styleSummary,
+                                  screens: current.screens.map((item) => (item.index === screen.index ? { ...item, prompt: screen.pendingPrompt || screen.prompt } : item)),
+                              }
+                            : current,
+                    );
+                } catch (error) {
+                    if (activeProjectIdRef.current !== resumedProjectId) return;
+                    const latest = screensRef.current.find((item) => item.index === screen.index);
+                    if (latest?.attemptId !== screen.attemptId || latest.imageJobId !== screen.imageJobId) return;
+                    updateScreen(screen.index, { status: "failed", error: error instanceof Error ? error.message : "任务恢复失败", imageJobId: undefined }, true);
+                }
+            }),
+        ).finally(() => {
+            resumedProjectIdsRef.current.delete(resumedProjectId);
+            if (activeProjectIdRef.current === resumedProjectId) {
+                setIsRunning(false);
+                setStatusText("");
+            }
+        });
+    }, [activeProjectId, projectReady]);
 
     const scheduleProjectSave = (items: DetailProject[]) => {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -198,6 +275,47 @@ export default function DetailWorkbenchPage() {
         await detailProjectStore.setItem(DETAIL_PROJECTS_KEY, serializeDetailProjects(items));
     };
 
+    const persistScreensImmediately = (nextScreens: DetailScreen[]) => {
+        const projectId = activeProjectIdRef.current;
+        if (!projectId) return;
+        const now = new Date().toISOString();
+        const nextProjects = projectsRef.current.map((project) =>
+            project.id === projectId
+                ? {
+                      ...project,
+                      updatedAt: now,
+                      references,
+                      productInfo,
+                      styleRequest,
+                      platform,
+                      screenCount,
+                      plan,
+                      screens: nextScreens,
+                      currentIndex,
+                      generationMode,
+                      preciseExecutionMode,
+                  }
+                : project,
+        );
+        projectsRef.current = nextProjects;
+        setProjects(nextProjects);
+        void persistProjects(nextProjects);
+    };
+
+    const updateScreen = (index: number, patch: Partial<DetailScreen>, persistImmediately = false) => {
+        setScreens((items) => {
+            const next = patchScreen(items, index, patch);
+            screensRef.current = next;
+            if (persistImmediately) queueMicrotask(() => persistScreensImmediately(next));
+            return next;
+        });
+    };
+
+    const updateCurrentFeedback = (value: string) => {
+        if (!currentScreen) return;
+        updateScreen(currentScreen.index, { feedbackDraft: value });
+    };
+
     const activeProjectSnapshot = (project: DetailProject): DetailProject => ({
         ...project,
         updatedAt: new Date().toISOString(),
@@ -209,6 +327,8 @@ export default function DetailWorkbenchPage() {
         plan,
         screens,
         currentIndex,
+        generationMode,
+        preciseExecutionMode,
     });
 
     const mergeActiveProjectState = (items: DetailProject[]) => {
@@ -265,6 +385,8 @@ export default function DetailWorkbenchPage() {
             plan: null,
             screens: [],
             currentIndex: 1,
+            generationMode: "precise",
+            preciseExecutionMode: "continuous",
         };
         project.title = title;
         const next = [project, ...mergedProjects];
@@ -316,7 +438,8 @@ export default function DetailWorkbenchPage() {
         setPlan(targetProject.plan || null);
         setScreens(targetProject.screens || []);
         setCurrentIndex(targetProject.currentIndex || 1);
-        setFeedback("");
+        setGenerationMode(targetProject.generationMode || "precise");
+        setPreciseExecutionMode(targetProject.preciseExecutionMode || "continuous");
         window.setTimeout(() => setProjectReady(true), 0);
     };
 
@@ -420,7 +543,6 @@ export default function DetailWorkbenchPage() {
             const nextPlan = await createDetailPlan();
             setDraftStyleSummary(nextPlan.styleSummary);
             setDraftScreens(nextPlan.screens);
-            setFeedback("");
             setPlanEditorOpen(true);
             message.success("分屏提示词已生成");
         } catch (error) {
@@ -444,22 +566,38 @@ export default function DetailWorkbenchPage() {
         setScreens(normalizedScreens);
         setScreenCount(normalizedScreens.length);
         setCurrentIndex(1);
-        setFeedback("");
         setPlanEditorOpen(false);
         setGenerationModeOpen(true);
     };
 
-    const startGenerationWithMode = async (mode: DetailGenerationMode) => {
+    const selectGenerationMode = (mode: DetailGenerationMode) => {
+        setGenerationModeOpen(false);
+        setGenerationMode(mode);
+        if (mode === "precise") {
+            setPreciseModeOpen(true);
+            return;
+        }
+        void startGenerationWithMode("rough", "continuous");
+    };
+
+    const selectPreciseExecutionMode = (executionMode: DetailPreciseExecutionMode) => {
+        setPreciseModeOpen(false);
+        setPreciseExecutionMode(executionMode);
+        void startGenerationWithMode("precise", executionMode);
+    };
+
+    const startGenerationWithMode = async (mode: DetailGenerationMode, executionMode: DetailPreciseExecutionMode) => {
         if (!plan) return;
         if (!isAiConfigReady(imageConfig, imageConfig.model)) {
             openConfigDialog(true);
             return;
         }
         setGenerationModeOpen(false);
+        setGenerationMode(mode);
+        setPreciseExecutionMode(executionMode);
         setIsRunning(true);
-        setFeedback("");
         try {
-            const result = mode === "rough" ? await generateRoughPlan(plan) : await generatePrecisePlan(plan);
+            const result = mode === "rough" ? await generateRoughPlan(plan) : executionMode === "step" ? await generatePreciseStep(plan, 1) : await generatePrecisePlan(plan);
             if (result.failed) {
                 message.warning(result.stoppedAt ? `生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续` : `生成完成：成功 ${result.success} 屏，失败 ${result.failed} 屏`);
             } else {
@@ -473,6 +611,19 @@ export default function DetailWorkbenchPage() {
         }
     };
 
+    const generatePreciseStep = async (sourcePlan: DetailPlan, index: number): Promise<DetailGenerationResult> => {
+        const sourceScreens = screensRef.current.length ? screensRef.current : sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        setCurrentIndex(index);
+        setStatusText(`逐屏确认：正在生成第 ${index} 屏`);
+        try {
+            const generated = await generateScreen(index, sourceScreens, sourcePlan, { mode: "precise" });
+            if (!generated) return { success: 0, failed: 1, stoppedAt: index };
+            return { success: 1, failed: 0 };
+        } catch {
+            return { success: 0, failed: 1, stoppedAt: index };
+        }
+    };
+
     const generatePrecisePlan = async (sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
         let sourceScreens: DetailScreen[] = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
         let success = 0;
@@ -481,25 +632,9 @@ export default function DetailWorkbenchPage() {
         for (const screen of sourceScreens) {
             setStatusText(`精细模式：正在生成第 ${screen.index} 屏`);
             try {
-                const generated = await generateScreen(screen.index, sourceScreens, sourcePlan);
+                const generated = await generateScreen(screen.index, sourceScreens, sourcePlan, { mode: "precise" });
+                if (!generated) return { success, failed: 1, stoppedAt: screen.index };
                 sourceScreens = patchScreen(sourceScreens, screen.index, generated);
-                success += 1;
-            } catch {
-                return { success, failed: 1, stoppedAt: screen.index };
-            }
-        }
-        return { success, failed: 0 };
-    };
-
-    const generatePreciseRange = async (startIndex: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
-        let nextScreens = [...sourceScreens];
-        let success = 0;
-        for (const screen of sourcePlan.screens.filter((item) => item.index >= startIndex)) {
-            setCurrentIndex(screen.index);
-            setStatusText(`精细模式：正在生成第 ${screen.index} 屏`);
-            try {
-                const generated = await generateScreen(screen.index, nextScreens, sourcePlan);
-                nextScreens = patchScreen(nextScreens, screen.index, generated);
                 success += 1;
             } catch {
                 return { success, failed: 1, stoppedAt: screen.index };
@@ -515,12 +650,13 @@ export default function DetailWorkbenchPage() {
         setScreens(sourceScreens);
         setCurrentIndex(1);
         setStatusText("粗糙模式：正在生成第一屏");
-        const first = await generateScreen(1, sourceScreens, sourcePlan, { throwOnError: false });
+        const first = await generateScreen(1, sourceScreens, sourcePlan, { mode: "rough", throwOnError: false });
         if (first?.imageUrl && first.storageKey) {
             success += 1;
             sourceScreens = sourceScreens.map((screen) => (screen.index === 1 ? { ...screen, imageUrl: first.imageUrl, storageKey: first.storageKey, status: "ready" as const } : screen));
         } else {
             failed += 1;
+            return { success, failed, stoppedAt: 1 };
         }
         const remainingScreens = sourcePlan.screens.slice(1);
         if (!remainingScreens.length) return { success, failed };
@@ -587,40 +723,46 @@ export default function DetailWorkbenchPage() {
 
         setIsRunning(true);
         setStatusText(`正在修改第 ${currentScreen.index} 屏`);
-        setScreens((items) => patchScreen(items, currentScreen.index, { status: "generating", error: undefined }));
         try {
             if (currentScreen.index === 1) {
                 setStatusText("正在根据修改建议调整整体设计和第一屏");
+                const revisionBasePlan = currentScreen.pendingPrompt
+                    ? { ...plan, screens: plan.screens.map((screen) => (screen.index === 1 ? { ...screen, prompt: currentScreen.pendingPrompt! } : screen)) }
+                    : plan;
                 const content = await requestDetailLlm([
                     {
                         role: "user",
-                        content: buildFirstScreenRevisionPrompt(plan, feedback),
+                        content: buildFirstScreenRevisionPrompt(revisionBasePlan, feedback),
                     },
                 ]);
-                const nextPlan = normalizePlan(parsePlan(content), screenCount);
-                const nextScreens = nextPlan.screens.map((screen) => {
-                    const old = screens.find((item) => item.index === screen.index);
-                    return {
-                        ...screen,
-                        imageUrl: old?.imageUrl,
-                        storageKey: old?.storageKey,
-                        status: screen.index === 1 ? ("generating" as const) : old?.status || ("not_started" as const),
-                    };
+                const revisedPlan = normalizePlan(parsePlan(content), screenCount);
+                const revisedFirst = revisedPlan.screens[0];
+                const nextPlan = {
+                    styleSummary: revisedPlan.styleSummary,
+                    screens: plan.screens.map((screen) => (screen.index === 1 ? { ...screen, ...revisedFirst, index: 1 } : screen)),
+                };
+                const sourceScreens = screens.map((screen) => (screen.index === 1 ? { ...screen, pendingPrompt: revisedFirst.prompt } : screen));
+                const generated = await generateScreen(1, sourceScreens, nextPlan, {
+                    includeCurrent: true,
+                    mode: currentScreen.attemptMode || generationMode,
+                    prompt: revisedFirst.prompt,
+                    pendingStyleSummary: revisedPlan.styleSummary,
                 });
+                if (!generated) return;
                 setPlan(nextPlan);
-                setScreens(nextScreens);
-                await generateScreen(1, nextScreens, nextPlan, { includeCurrent: true });
+                setScreens((items) => items.map((screen) => (screen.index === 1 ? screen : { ...screen, needsReview: true })));
             } else {
                 setStatusText(`正在局部改写第 ${currentScreen.index} 屏提示词`);
-                const prompt = await requestDetailLlm([{ role: "user", content: buildScreenRevisionPrompt(plan, currentScreen, feedback) }]);
-                const nextScreens = screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, prompt: cleanPromptText(prompt), status: "generating" as const } : screen));
-                setScreens(nextScreens);
-                await generateScreen(currentScreen.index, nextScreens, plan, { includeCurrent: true });
+                const prompt = await requestDetailLlm([{ role: "user", content: buildScreenRevisionPrompt(plan, { ...currentScreen, prompt: currentScreen.pendingPrompt || currentScreen.prompt }, feedback) }]);
+                const pendingPrompt = cleanPromptText(prompt);
+                const nextScreens = screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, pendingPrompt } : screen));
+                const generated = await generateScreen(currentScreen.index, nextScreens, plan, { includeCurrent: true, mode: currentScreen.attemptMode || generationMode, prompt: pendingPrompt });
+                if (!generated) return;
+                setPlan((current) => (current ? { ...current, screens: current.screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, prompt: pendingPrompt } : screen)) } : current));
             }
-            setFeedback("");
+            updateScreen(currentScreen.index, { feedbackDraft: "", pendingPrompt: undefined });
             message.success("已按修改建议重新生成");
         } catch (error) {
-            setScreens((items) => patchScreen(items, currentScreen.index, { status: currentScreen.imageUrl ? "ready" : "failed", error: error instanceof Error ? error.message : "修改失败" }));
             message.error(error instanceof Error ? error.message : "修改失败");
         } finally {
             setIsRunning(false);
@@ -633,6 +775,12 @@ export default function DetailWorkbenchPage() {
         const nextIndex = currentScreen.index + 1;
         if (nextIndex > plan.screens.length) {
             message.success("所有屏幕已生成");
+            return;
+        }
+        const existingNext = screens.find((screen) => screen.index === nextIndex);
+        if (existingNext?.imageUrl && existingNext.status === "ready") {
+            setCurrentIndex(nextIndex);
+            message.info(`第 ${nextIndex} 屏已有图片，未重复生成`);
             return;
         }
         setIsRunning(true);
@@ -648,18 +796,55 @@ export default function DetailWorkbenchPage() {
         }
     };
 
+    const continueUnfinishedScreens = async () => {
+        if (!plan || !currentScreen || isRunning) return;
+        const pending = plan.screens.filter((screen) => {
+            const saved = screensRef.current.find((item) => item.index === screen.index);
+            return screen.index > currentScreen.index && saved?.status === "not_started" && !saved.imageUrl;
+        });
+        if (!pending.length) {
+            message.info("没有未生成的后续屏幕");
+            return;
+        }
+        setIsRunning(true);
+        let nextScreens = screensRef.current;
+        try {
+            for (const screen of pending) {
+                setCurrentIndex(screen.index);
+                setStatusText(`自动连续：正在生成第 ${screen.index} 屏`);
+                const generated = await generateScreen(screen.index, nextScreens, plan, { mode: "precise" });
+                if (!generated) break;
+                nextScreens = patchScreen(nextScreens, screen.index, generated);
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "继续生成失败");
+        } finally {
+            setIsRunning(false);
+            setStatusText("");
+        }
+    };
+
     const regenerateCurrent = async () => {
         if (!plan || !currentScreen) return;
         setIsRunning(true);
         setStatusText(`正在重新生成第 ${currentScreen.index} 屏`);
         try {
-            if (currentScreen.status === "failed") {
-                const result = await generatePreciseRange(currentScreen.index, screens, plan);
-                if (result.failed) message.warning(`生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续`);
-                else message.success(`已从第 ${currentScreen.index} 屏继续生成后续屏幕`);
-            } else {
-                await generateScreen(currentScreen.index, screens, plan);
-            }
+            const generated = await generateScreen(currentScreen.index, screens, plan, {
+                mode: currentScreen.attemptMode || generationMode,
+                prompt: currentScreen.pendingPrompt || currentScreen.prompt,
+                pendingStyleSummary: currentScreen.pendingStyleSummary,
+            });
+            if (!generated) return;
+            setPlan((current) =>
+                current
+                    ? {
+                          ...current,
+                          styleSummary: currentScreen.pendingStyleSummary || current.styleSummary,
+                          screens: current.screens.map((screen) => (screen.index === currentScreen.index ? { ...screen, prompt: generated.prompt } : screen)),
+                      }
+                    : current,
+            );
+            message.success(`第 ${currentScreen.index} 屏已重新生成`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "重新生成失败");
         } finally {
@@ -668,32 +853,59 @@ export default function DetailWorkbenchPage() {
         }
     };
 
-    const generateScreen = async (index: number, sourceScreens: DetailScreen[], sourcePlan: DetailPlan, options?: { includeCurrent?: boolean; mode?: DetailGenerationMode; throwOnError?: boolean }) => {
+    const generateScreen = async (
+        index: number,
+        sourceScreens: DetailScreen[],
+        sourcePlan: DetailPlan,
+        options?: { includeCurrent?: boolean; mode?: DetailGenerationMode; throwOnError?: boolean; prompt?: string; pendingStyleSummary?: string },
+    ) => {
         const target = sourceScreens.find((screen) => screen.index === index);
         if (!target) throw new Error("未找到当前屏提示词");
-        setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: "generating", error: undefined }));
+        const projectId = activeProjectIdRef.current;
+        const attemptId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const attemptMode = options?.mode || generationMode;
+        const attemptPrompt = options?.prompt || target.pendingPrompt || target.prompt;
+        updateScreen(index, { status: "generating", error: undefined, attemptId, attemptMode, pendingPrompt: attemptPrompt, pendingStyleSummary: options?.pendingStyleSummary, imageJobId: undefined }, true);
         try {
             const refs = await buildGenerationReferences(index, sourceScreens, options);
-            const prompt = buildImagePrompt(sourcePlan, target, index, options?.mode || "precise", Boolean(options?.includeCurrent));
-            const images = refs.length ? await requestEdit(imageConfig, prompt, refs) : await requestGeneration(imageConfig, prompt);
+            const prompt = buildImagePrompt(sourcePlan, { ...target, prompt: attemptPrompt }, index, attemptMode, Boolean(options?.includeCurrent));
+            const requestOptions = {
+                onCreated: (imageJobId: string) => {
+                    if (activeProjectIdRef.current !== projectId) return;
+                    const activeAttempt = screensRef.current.find((screen) => screen.index === index)?.attemptId;
+                    if (activeAttempt === attemptId) updateScreen(index, { imageJobId }, true);
+                },
+            };
+            const images = refs.length ? await requestEdit(imageConfig, prompt, refs, requestOptions) : await requestGeneration(imageConfig, prompt, requestOptions);
             const uploaded = await uploadImage(images[0].dataUrl);
-            setScreens((items) =>
-                patchScreen(items.length ? items : sourceScreens, index, {
+            if (activeProjectIdRef.current !== projectId) return undefined;
+            if (screensRef.current.find((screen) => screen.index === index)?.attemptId !== attemptId) return undefined;
+            updateScreen(
+                index,
+                {
+                    prompt: attemptPrompt,
+                    pendingPrompt: undefined,
+                    pendingStyleSummary: undefined,
                     imageUrl: uploaded.url,
                     storageKey: uploaded.storageKey,
                     status: "ready",
                     error: undefined,
-                }),
+                    imageJobId: undefined,
+                },
+                true,
             );
             return {
                 ...target,
+                prompt: attemptPrompt,
                 imageUrl: uploaded.url,
                 storageKey: uploaded.storageKey,
                 status: "ready" as const,
                 error: undefined,
             };
         } catch (error) {
-            setScreens((items) => patchScreen(items.length ? items : sourceScreens, index, { status: target.imageUrl ? "ready" : "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            if (activeProjectIdRef.current === projectId && screensRef.current.find((screen) => screen.index === index)?.attemptId === attemptId) {
+                updateScreen(index, { status: "failed", error: error instanceof Error ? error.message : "生成失败", pendingPrompt: attemptPrompt }, true);
+            }
             if (options?.throwOnError === false) return undefined;
             throw error;
         }
@@ -840,19 +1052,10 @@ export default function DetailWorkbenchPage() {
         message.success(`第 ${currentScreen.index} 屏已替换`);
     };
 
-    const retryScreen = async (index: number) => {
+    const retryScreen = (index: number) => {
         if (!plan || isRunning) return;
         setCurrentIndex(index);
-        setIsRunning(true);
-        setStatusText(`正在从第 ${index} 屏继续生成`);
-        try {
-            const result = await generatePreciseRange(index, screens, plan);
-            if (result.failed) message.warning(`生成暂停：成功 ${result.success} 屏，第 ${result.stoppedAt} 屏失败，请重新生成后继续`);
-            else message.success(`已从第 ${index} 屏继续生成后续屏幕`);
-        } finally {
-            setIsRunning(false);
-            setStatusText("");
-        }
+        message.info(`已切换到第 ${index} 屏，可按原方案重试，也可以输入新方向后重试`);
     };
 
     const openAddScreen = () => {
@@ -1126,21 +1329,25 @@ export default function DetailWorkbenchPage() {
                                 </div>
                                 {centerImageSettingsOpen ? <ImageSettingsPanel config={imageConfig} onConfigChange={updateConfig} theme={theme} showTitle={false} maxCount={1} quickCount={1} showCount={false} className="mt-3 space-y-4" /> : null}
                             </div>
-                            <Input.TextArea disabled={isRunning} value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={3} placeholder={currentScreen?.index === 1 ? "输入对第一屏的修改建议。系统会调整整体设计方案并重新生成第一屏。" : "输入对当前屏的局部修改建议。系统只改写当前屏提示词并重新生成。"} />
+                            <Input.TextArea disabled={isRunning} value={feedback} onChange={(event) => updateCurrentFeedback(event.target.value)} rows={3} placeholder={currentScreen?.index === 1 ? "输入对第一屏的修改方向；只重做第一屏，不会自动覆盖后续图片。" : "输入当前屏的新方向；系统只改写并重做当前屏。"} />
                             <div className="mt-3 flex flex-wrap justify-between gap-2">
                                 <Space wrap>
                                     <Button icon={<RefreshCw className="size-4" />} disabled={!currentScreen || isRunning} onClick={() => void regenerateCurrent()}>
-                                        重新生成
+                                        {currentScreen?.status === "failed" ? "按原方案重试本屏" : "重新生成本屏"}
                                     </Button>
                                     <Button icon={<Upload className="size-4" />} disabled={!currentScreen || isRunning} onClick={() => currentReplaceInputRef.current?.click()}>
                                         替换本地图片
                                     </Button>
                                     <Button type="primary" icon={<Wand2 className="size-4" />} disabled={!currentScreen || isRunning || !feedback.trim()} onClick={() => void modifyCurrentScreen()}>
-                                        按建议修改
+                                        {currentScreen?.status === "failed" ? "按当前要求重试本屏" : "按要求修改本屏"}
                                     </Button>
                                 </Space>
-                                <Button type="primary" disabled={!currentScreen?.imageUrl || isRunning || !plan || currentScreen.index >= plan.screens.length} onClick={() => void generateNextScreen()}>
-                                    生成下一张
+                                <Button
+                                    type="primary"
+                                    disabled={!currentScreen?.imageUrl || isRunning || !plan || (preciseExecutionMode === "continuous" ? !hasUnfinishedAfterCurrent : currentScreen.index >= plan.screens.length)}
+                                    onClick={() => void (preciseExecutionMode === "continuous" ? continueUnfinishedScreens() : generateNextScreen())}
+                                >
+                                    {preciseExecutionMode === "continuous" ? "继续生成未完成屏幕" : "确认并生成下一屏"}
                                 </Button>
                             </div>
                             <input
@@ -1156,8 +1363,8 @@ export default function DetailWorkbenchPage() {
                             {failedScreens.length ? (
                                 <div className="mt-3 flex flex-wrap gap-2 rounded-lg border border-red-200 bg-red-50 p-2 dark:border-red-400/20 dark:bg-red-500/10">
                                     {failedScreens.map((screen) => (
-                                        <Button key={screen.index} size="small" danger icon={<RefreshCw className="size-3.5" />} disabled={isRunning} onClick={() => void retryScreen(screen.index)}>
-                                            第 {screen.index} 屏失败，重新生成
+                                        <Button key={screen.index} size="small" danger icon={<RefreshCw className="size-3.5" />} disabled={isRunning} onClick={() => retryScreen(screen.index)}>
+                                            第 {screen.index} 屏失败，查看并重试
                                         </Button>
                                     ))}
                                 </div>
@@ -1292,19 +1499,38 @@ export default function DetailWorkbenchPage() {
 
             <Modal title="选择生成模式" open={generationModeOpen} onCancel={() => setGenerationModeOpen(false)} footer={null} width={640}>
                 <div className="grid gap-3 sm:grid-cols-2">
-                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => void startGenerationWithMode("precise")}>
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => selectGenerationMode("precise")}>
                         <div className="mb-2 flex items-center gap-2 text-base font-semibold">
                             <Sparkles className="size-4" />
                             精细模式
                         </div>
                         <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">按顺序生成。第二屏以后默认带第一屏和上一屏作为参考，连贯性更好。</div>
                     </button>
-                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => void startGenerationWithMode("rough")}>
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => selectGenerationMode("rough")}>
                         <div className="mb-2 flex items-center gap-2 text-base font-semibold">
                             <Wand2 className="size-4" />
                             粗糙模式
                         </div>
                         <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">先生成第一屏，再并发生成其他屏。后续屏以第一屏为风格参考，速度更快。</div>
+                    </button>
+                </div>
+            </Modal>
+
+            <Modal title="选择精细模式执行方式" open={preciseModeOpen} onCancel={() => setPreciseModeOpen(false)} footer={null} width={640}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => selectPreciseExecutionMode("step")}>
+                        <div className="mb-2 flex items-center gap-2 text-base font-semibold">
+                            <Eye className="size-4" />
+                            逐屏确认
+                        </div>
+                        <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">每生成一屏就暂停。满意后再生成下一屏，不满意可以输入方向，只修改当前屏。</div>
+                    </button>
+                    <button type="button" className="rounded-lg border border-stone-200 p-4 text-left transition hover:border-blue-400 hover:bg-blue-50 dark:border-white/10 dark:hover:bg-blue-500/10" onClick={() => selectPreciseExecutionMode("continuous")}>
+                        <div className="mb-2 flex items-center gap-2 text-base font-semibold">
+                            <Sparkles className="size-4" />
+                            自动连续
+                        </div>
+                        <div className="text-sm leading-6 text-stone-600 dark:text-stone-400">按顺序自动生成全部屏幕；遇到失败立即暂停，处理当前屏后再决定是否继续。</div>
                     </button>
                 </div>
             </Modal>
