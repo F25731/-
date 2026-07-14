@@ -220,7 +220,7 @@ export default function DetailWorkbenchPage() {
                     const uploaded = await uploadImage(images[0].dataUrl);
                     if (activeProjectIdRef.current !== resumedProjectId) return;
                     const latest = screensRef.current.find((item) => item.index === screen.index);
-                    if (latest?.attemptId !== screen.attemptId || latest.imageJobId !== screen.imageJobId) return;
+                    if (latest?.attemptId !== screen.attemptId || latest?.imageJobId !== screen.imageJobId) return;
                     updateScreen(
                         screen.index,
                         {
@@ -247,7 +247,7 @@ export default function DetailWorkbenchPage() {
                 } catch (error) {
                     if (activeProjectIdRef.current !== resumedProjectId) return;
                     const latest = screensRef.current.find((item) => item.index === screen.index);
-                    if (latest?.attemptId !== screen.attemptId || latest.imageJobId !== screen.imageJobId) return;
+                    if (latest?.attemptId !== screen.attemptId || latest?.imageJobId !== screen.imageJobId) return;
                     updateScreen(screen.index, { status: "failed", error: error instanceof Error ? error.message : "任务恢复失败", imageJobId: undefined }, true);
                 }
             }),
@@ -644,7 +644,7 @@ export default function DetailWorkbenchPage() {
     };
 
     const generateRoughPlan = async (sourcePlan: DetailPlan): Promise<DetailGenerationResult> => {
-        let sourceScreens = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
+        let sourceScreens: DetailScreen[] = sourcePlan.screens.map((screen) => ({ ...screen, status: "not_started" as const }));
         let success = 0;
         let failed = 0;
         setScreens(sourceScreens);

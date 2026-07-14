@@ -4,7 +4,7 @@ const DETAIL_PROJECTS_KEY = "detail-workbench:projects";
 
 export const detailProjectStore = localforage.createInstance({ name: "infinite-canvas", storeName: "detail_projects" });
 
-export async function readStoredDetailProjects<T>() {
+export async function readStoredDetailProjects<T extends { references?: Array<Record<string, unknown>>; screens?: Array<Record<string, unknown>> }>() {
     const stored = await detailProjectStore.getItem<T[]>(DETAIL_PROJECTS_KEY);
     if (Array.isArray(stored)) return stored;
     const legacy = JSON.parse(localStorage.getItem(DETAIL_PROJECTS_KEY) || "[]") as T[];
