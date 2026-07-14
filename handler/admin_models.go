@@ -24,7 +24,7 @@ func PromptExtract(w http.ResponseWriter, r *http.Request) {
 		APIKey string `json:"apiKey"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&payload)
-	result, err := service.ExtractPromptFromImage(payload.Image, payload.Model, payload.APIKey)
+	result, err := service.ExtractPromptFromImage(r.Context(), payload.Image, payload.Model, payload.APIKey)
 	if err != nil {
 		FailError(w, err)
 		return
@@ -39,7 +39,7 @@ func DetailLLM(w http.ResponseWriter, r *http.Request) {
 		Messages []any  `json:"messages"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&payload)
-	result, err := service.RequestDetailPrompt(payload.ModelID, payload.APIKey, payload.Messages)
+	result, err := service.RequestDetailPrompt(r.Context(), payload.ModelID, payload.APIKey, payload.Messages)
 	if err != nil {
 		FailError(w, err)
 		return

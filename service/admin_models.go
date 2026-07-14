@@ -1,11 +1,8 @@
 package service
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -84,7 +81,7 @@ func SaveAdminModel(item model.AdminModel) (model.AdminModel, error) {
 	return safeAdminModel(saved), nil
 }
 
-func ExtractPromptFromImage(image string, promptModelID string, apiKey string) (string, error) {
+func ExtractPromptFromImage(ctx context.Context, image string, promptModelID string, apiKey string) (string, error) {
 	image = strings.TrimSpace(image)
 	apiKey = strings.TrimSpace(apiKey)
 	if image == "" {
@@ -101,56 +98,27 @@ func ExtractPromptFromImage(image string, promptModelID string, apiKey string) (
 	if modelID == "" {
 		modelID = promptModel.Name
 	}
-	body, _ := json.Marshal(map[string]any{
-		"model": modelID,
-		"messages": []map[string]any{{
-			"role": "user",
-			"content": []map[string]any{
-				{"type": "text", "text": "请根据这张图片提取一段可直接用于 AI 生图的中文提示词。要求：只输出提示词正文，不要解释；覆盖主体、场景、构图、镜头、光线、色彩、材质、风格、细节和画质；如果图片里有文字，也描述文字内容与排版。"},
-				{"type": "image_url", "image_url": map[string]string{"url": image}},
-			},
-		}},
-	})
+	imageDataURL, err := loadCodexImageDataURL(ctx, image)
+	if err != nil {
+		return "", safeMessageError{message: err.Error()}
+	}
 	channel := model.ModelChannel{BaseURL: promptModel.APIURL, APIKey: apiKey}
-	request, err := http.NewRequest(http.MethodPost, BuildModelChannelURL(channel, "/chat/completions"), bytes.NewReader(body))
+	content, err := requestCodexResponse(ctx, codexResponseRequest{
+		Channel:        channel,
+		ModelID:        modelID,
+		APIKey:         apiKey,
+		Task:           "请根据这张图片提取一段可直接用于 AI 生图的中文提示词。要求：只输出提示词正文，不要解释；覆盖主体、场景、构图、镜头、光线、色彩、材质、风格、细节和画质；如果图片里有文字，也描述文字内容与排版。",
+		ImageDataURL:   imageDataURL,
+		PromptCacheKey: "canvas-codex-image-v1",
+		Timeout:        90 * time.Second,
+	})
 	if err != nil {
-		return "", err
+		return "", safeMessageError{message: "提取提示词失败：" + err.Error()}
 	}
-	request.Header.Set("Authorization", "Bearer "+apiKey)
-	request.Header.Set("Content-Type", "application/json")
-	client := http.Client{Timeout: 90 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	responseBody, _ := io.ReadAll(response.Body)
-	if response.StatusCode >= http.StatusBadRequest {
-		return "", readAdminChannelError(responseBody, response.StatusCode, "提取失败")
-	}
-	var payload struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	_ = json.Unmarshal(responseBody, &payload)
-	if payload.Code != 0 && strings.TrimSpace(payload.Msg) != "" {
-		return "", safeMessageError{message: payload.Msg}
-	}
-	if len(payload.Choices) > 0 {
-		content := strings.TrimSpace(payload.Choices[0].Message.Content)
-		if content != "" {
-			return content, nil
-		}
-	}
-	return "", safeMessageError{message: "接口没有返回提示词"}
+	return content, nil
 }
 
-func RequestDetailPrompt(modelID string, apiKey string, messages []any) (string, error) {
+func RequestDetailPrompt(ctx context.Context, modelID string, apiKey string, messages []any) (string, error) {
 	modelID = strings.TrimSpace(modelID)
 	apiKey = strings.TrimSpace(apiKey)
 	if modelID == "" {
@@ -170,33 +138,23 @@ func RequestDetailPrompt(modelID string, apiKey string, messages []any) (string,
 	if upstreamModelID == "" {
 		upstreamModelID = detailModel.Name
 	}
-	body, _ := json.Marshal(map[string]any{
-		"model":       upstreamModelID,
-		"messages":    messages,
-		"temperature": 0.7,
-	})
+	taskText := flattenPromptMessages(messages)
+	if taskText == "" {
+		return "", safeMessageError{message: "详情图提示词请求内容格式错误"}
+	}
 	channel := model.ModelChannel{BaseURL: detailModel.APIURL, APIKey: apiKey}
-	request, err := http.NewRequest(http.MethodPost, BuildModelChannelURL(channel, "/chat/completions"), bytes.NewReader(body))
+	content, err := requestCodexResponse(ctx, codexResponseRequest{
+		Channel:        channel,
+		ModelID:        upstreamModelID,
+		APIKey:         apiKey,
+		Task:           taskText,
+		PromptCacheKey: "canvas-codex-detail-v1",
+		Timeout:        180 * time.Second,
+	})
 	if err != nil {
-		return "", err
+		return "", safeMessageError{message: "详情图提示词请求失败：" + err.Error()}
 	}
-	request.Header.Set("Authorization", "Bearer "+apiKey)
-	request.Header.Set("Content-Type", "application/json")
-	client := http.Client{Timeout: 180 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return "", safeMessageError{message: "详情图提示词接口访问超时或失败，请检查 API Key 或模型是否可用"}
-	}
-	defer response.Body.Close()
-	responseBody, _ := io.ReadAll(response.Body)
-	if response.StatusCode >= http.StatusBadRequest {
-		return "", readAdminChannelError(responseBody, response.StatusCode, "详情图提示词请求失败")
-	}
-	content := readChatCompletionContent(responseBody)
-	if content != "" {
-		return content, nil
-	}
-	return "", safeMessageError{message: "详情图提示词接口没有返回内容"}
+	return content, nil
 }
 
 func selectPromptModel(id string) (model.AdminModel, error) {
@@ -234,36 +192,6 @@ func selectDetailPromptModel(id string) (model.AdminModel, error) {
 		}
 	}
 	return model.AdminModel{}, safeMessageError{message: "后台还没有配置可用的详情图提示词模型"}
-}
-
-func readChatCompletionContent(body []byte) string {
-	var payload struct {
-		Choices []struct {
-			Message struct {
-				Content any `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	_ = json.Unmarshal(body, &payload)
-	if len(payload.Choices) == 0 {
-		return ""
-	}
-	content := payload.Choices[0].Message.Content
-	if text, ok := content.(string); ok {
-		return strings.TrimSpace(text)
-	}
-	if parts, ok := content.([]any); ok {
-		var builder strings.Builder
-		for _, part := range parts {
-			if item, ok := part.(map[string]any); ok {
-				if text, ok := item["text"].(string); ok {
-					builder.WriteString(text)
-				}
-			}
-		}
-		return strings.TrimSpace(builder.String())
-	}
-	return ""
 }
 
 func publicAdminModels(items []model.AdminModel) []model.AdminModel {
