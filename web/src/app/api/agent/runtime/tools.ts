@@ -144,6 +144,62 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
         },
         additionalProperties: false,
     }),
+    tool("canvas_add_detail_screen", "Add exactly one screen to an existing detail workflow without regenerating any existing screen. Omit after_screen_index to append it at the end.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            after_screen_index: { type: "integer", minimum: 0, maximum: 12 },
+            title: { type: "string" },
+            goal: { type: "string" },
+            prompt: { type: "string" },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["title", "goal", "prompt"],
+        additionalProperties: false,
+    }),
+    tool("canvas_update_detail_screen", "Modify and regenerate exactly one existing detail screen in place. Preserve every other screen and refresh the composed long image after success.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            screen_index: { type: "integer", minimum: 1, maximum: 12 },
+            title: { type: "string" },
+            goal: { type: "string" },
+            prompt: { type: "string" },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["screen_index", "title", "goal", "prompt"],
+        additionalProperties: false,
+    }),
+    tool("canvas_remove_detail_screen", "Remove exactly one screen from an existing detail workflow without regenerating the remaining screens, then refresh the composed long image.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            screen_index: { type: "integer", minimum: 1, maximum: 12 },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["screen_index"],
+        additionalProperties: false,
+    }),
+    tool("canvas_move_detail_screen", "Move one existing screen to a new position in the same detail workflow without regenerating any image, then refresh the composed long image.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            screen_index: { type: "integer", minimum: 1, maximum: 12 },
+            after_screen_index: { type: "integer", minimum: 0, maximum: 12 },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["screen_index", "after_screen_index"],
+        additionalProperties: false,
+    }),
+    tool("canvas_regenerate_detail_workflow", "Regenerate every screen in an existing detail workflow. Use only when the user explicitly asks to regenerate or redo the whole workflow.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            style_summary: { type: "string" },
+            compose_when_complete: { type: "boolean" },
+        },
+        additionalProperties: false,
+    }),
     tool("canvas_retry_detail_screen", "Retry one failed or revised detail-page screen and preserve the workflow continuity references.", {
         type: "object",
         properties: {
@@ -167,7 +223,7 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
 
 export type CompiledTool = { kind: "direct"; output: Record<string, unknown> } | { kind: "browser"; request: AgentToolRequest };
 
-export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasSnapshot, ids: { runId: string; turnId: string }, step: number, detailOptions?: AgentDetailOptions): CompiledTool {
+export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasSnapshot, ids: { runId: string; turnId: string }, step: number, detailOptions?: AgentDetailOptions, userPrompt = ""): CompiledTool {
     const name = String(item.name || "");
     const toolCallId = String(item.call_id || item.id || `tool-${step}`);
     const args = applyDetailOptions(name, parseArguments(item.arguments), detailOptions);
@@ -188,6 +244,8 @@ export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasS
         return { kind: "direct", output: { ok: true, jobs, message: jobs.length ? `Found ${jobs.length} image jobs` : "No active image jobs" } };
     }
 
+    enforceDetailToolIntent(name, snapshot, userPrompt);
+
     let operation: CanvasOperationPayload;
     let description = "执行画布操作";
     if (name === "canvas_generate_images") {
@@ -200,9 +258,20 @@ export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasS
         const built = buildDetailWorkflowOperations(snapshot, args, `${Date.now()}-${step}`);
         operation = { type: "canvas.applyOps", operations: built.operations };
         description = `创建 ${built.screenCount} 屏详情图工作流并开始生成`;
-    } else if (["canvas_continue_detail_workflow", "canvas_retry_detail_screen", "canvas_compose_detail_long_image"].includes(name)) {
+    } else if (
+        [
+            "canvas_continue_detail_workflow",
+            "canvas_add_detail_screen",
+            "canvas_update_detail_screen",
+            "canvas_remove_detail_screen",
+            "canvas_move_detail_screen",
+            "canvas_regenerate_detail_workflow",
+            "canvas_retry_detail_screen",
+            "canvas_compose_detail_long_image",
+        ].includes(name)
+    ) {
         operation = buildDetailWorkflowAction(name, args);
-        description = name === "canvas_compose_detail_long_image" ? "在浏览器合成详情页长图" : name === "canvas_retry_detail_screen" ? `重试详情图第 ${Number(args.screen_index) || 1} 屏` : "继续未完成的详情图工作流";
+        description = detailToolDescription(name, args);
     } else if (name === "canvas_retry_failed_images") {
         const requestedIds = stringArray(args.node_ids);
         const failedNodes = snapshot.nodes.filter((node) => node.type === "image" && ["error", "failed"].includes(String(node.status || "")) && (!requestedIds.length || requestedIds.includes(node.id)));
@@ -244,6 +313,28 @@ export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasS
             status: "pending",
         },
     };
+}
+
+function enforceDetailToolIntent(name: string, snapshot: AgentCanvasSnapshot, userPrompt: string) {
+    const hasDetailWorkflow = snapshot.nodes.some((node) => Boolean(node.detailWorkflowId));
+    if (name === "canvas_create_detail_workflow" && hasDetailWorkflow && !/(另做|另一套|新建一套|新建新的|创建一套新的|再做一套新的)/i.test(userPrompt)) {
+        throw new ToolValidationError(name, "An existing detail workflow must be edited incrementally. Use add/update/remove/regenerate tools unless the user explicitly asks for a separate new workflow.");
+    }
+    if (name === "canvas_regenerate_detail_workflow" && !/(全部|所有|整套|全套|每一屏|所有屏).{0,16}(重新生成|重做|重绘|再生成|全部更新)|(重新生成|重做|重绘|再生成).{0,16}(全部|所有|整套|全套|每一屏|所有屏)/i.test(userPrompt)) {
+        throw new ToolValidationError(name, "Full-workflow regeneration requires an explicit user request to regenerate every screen. Use a single-screen incremental tool instead.");
+    }
+}
+
+function detailToolDescription(name: string, args: Record<string, unknown>) {
+    const index = Number(args.screen_index) || 1;
+    if (name === "canvas_compose_detail_long_image") return "在浏览器合成详情页长图";
+    if (name === "canvas_add_detail_screen") return `仅新增一屏详情图：${String(args.title || "新屏幕").slice(0, 48)}`;
+    if (name === "canvas_update_detail_screen") return `仅修改并重新生成详情图第 ${index} 屏`;
+    if (name === "canvas_remove_detail_screen") return `仅删除详情图第 ${index} 屏`;
+    if (name === "canvas_move_detail_screen") return `仅调整详情图第 ${index} 屏顺序`;
+    if (name === "canvas_regenerate_detail_workflow") return "按用户明确要求重新生成全部详情图屏幕";
+    if (name === "canvas_retry_detail_screen") return `重试详情图第 ${index} 屏`;
+    return "继续未完成的详情图工作流";
 }
 
 function applyDetailOptions(name: string, args: Record<string, unknown>, detailOptions?: AgentDetailOptions) {

@@ -22,11 +22,16 @@ export type DetailWorkflowScreen = {
 
 export type DetailWorkflowOperation = {
     type: "canvas.runDetailWorkflow";
-    action: "create" | "continue" | "retry" | "compose";
+    action: "create" | "continue" | "retry" | "compose" | "add-screen" | "update-screen" | "remove-screen" | "move-screen" | "regenerate-all";
     workflowId?: string;
     generationMode?: DetailWorkflowMode;
     executionMode?: DetailWorkflowExecutionMode;
     screenIndex?: number;
+    afterScreenIndex?: number;
+    screenTitle?: string;
+    screenGoal?: string;
+    screenPrompt?: string;
+    styleSummary?: string;
     composeWhenComplete?: boolean;
 };
 
@@ -36,7 +41,7 @@ export function detailWorkflowConfigs(nodes: CanvasNodeData[], workflowId: strin
 
 export function detailWorkflowResults(nodes: CanvasNodeData[], workflowId: string) {
     return nodes
-        .filter((node) => node.metadata?.detailWorkflowId === workflowId && node.metadata.detailRole === "screen-result" && Boolean(node.metadata.content))
+        .filter((node) => node.metadata?.detailWorkflowId === workflowId && node.metadata.detailRole === "screen-result" && Boolean(node.metadata.content) && node.metadata.status !== "error" && node.metadata.status !== "loading")
         .sort((left, right) => Number(left.metadata?.detailScreenIndex || 0) - Number(right.metadata?.detailScreenIndex || 0));
 }
 

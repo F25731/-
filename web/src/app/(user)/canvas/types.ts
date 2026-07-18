@@ -64,6 +64,7 @@ export type CanvasNodeMetadata = {
     detailReferenceRoles?: Array<"product" | "first-screen" | "previous-screen">;
     detailPromptNodeId?: string;
     detailAttempt?: number;
+    detailCompositionStale?: boolean;
 };
 
 export type CanvasNodeData = {
@@ -161,6 +162,8 @@ export type CanvasAgentEventType =
     | "generation.completed"
     | "generation.failed"
     | "detail.workflow.created"
+    | "detail.workflow.updated"
+    | "detail.workflow.regenerating"
     | "detail.screen.started"
     | "detail.screen.completed"
     | "detail.screen.failed"

@@ -176,11 +176,44 @@ export function buildDetailWorkflowOperations(snapshot: AgentCanvasSnapshot, arg
 }
 
 export function buildDetailWorkflowAction(name: string, args: Record<string, unknown>): CanvasOperationPayload {
+    const action =
+        name === "canvas_compose_detail_long_image"
+            ? "compose"
+            : name === "canvas_retry_detail_screen"
+              ? "retry"
+              : name === "canvas_add_detail_screen"
+                ? "add-screen"
+                : name === "canvas_update_detail_screen"
+                  ? "update-screen"
+                  : name === "canvas_remove_detail_screen"
+                    ? "remove-screen"
+                    : name === "canvas_move_detail_screen"
+                      ? "move-screen"
+                      : name === "canvas_regenerate_detail_workflow"
+                        ? "regenerate-all"
+                        : "continue";
     return {
         type: "canvas.runDetailWorkflow",
-        action: name === "canvas_compose_detail_long_image" ? "compose" : name === "canvas_retry_detail_screen" ? "retry" : "continue",
+        action,
         workflowId: String(args.workflow_id || "").trim() || undefined,
         screenIndex: Number(args.screen_index) || undefined,
+        afterScreenIndex: Number.isFinite(Number(args.after_screen_index)) ? Math.max(0, Math.floor(Number(args.after_screen_index))) : undefined,
+        screenTitle:
+            String(args.title || "")
+                .trim()
+                .slice(0, 64) || undefined,
+        screenGoal:
+            String(args.goal || "")
+                .trim()
+                .slice(0, 1000) || undefined,
+        screenPrompt:
+            String(args.prompt || "")
+                .trim()
+                .slice(0, 12000) || undefined,
+        styleSummary:
+            String(args.style_summary || "")
+                .trim()
+                .slice(0, 8000) || undefined,
         generationMode: args.generation_mode === "rough" ? "rough" : undefined,
         executionMode: args.execution_mode === "continuous" ? "continuous" : args.execution_mode === "step" ? "step" : undefined,
         composeWhenComplete: args.compose_when_complete !== false,

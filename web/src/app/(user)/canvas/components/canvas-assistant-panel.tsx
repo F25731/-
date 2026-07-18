@@ -1164,6 +1164,8 @@ function agentEventLabel(event: CanvasAgentEvent) {
         "generation.completed": event.text || "生成流程完成",
         "generation.failed": event.text || "生成流程失败",
         "detail.workflow.created": event.text || "详情图工作流已创建",
+        "detail.workflow.updated": event.text || "详情图工作流已增量更新",
+        "detail.workflow.regenerating": event.text || "正在重新生成全部详情图屏幕",
         "detail.screen.started": event.text || "正在生成详情图屏幕",
         "detail.screen.completed": event.text || "详情图屏幕已完成",
         "detail.screen.failed": event.text || "详情图屏幕生成失败",

@@ -83,7 +83,7 @@ export async function runCanvasAgent(input: RunAgentInput): Promise<AgentRunResp
                     const signature = `${call.name}:${call.arguments}`;
                     if (signatures.has(signature)) throw new ToolValidationError(String(call.name || "unknown"), "Duplicate tool call was blocked");
                     signatures.add(signature);
-                    const compiled = compileToolCall(call, snapshot, { runId: input.runId, turnId: input.turnId }, toolSteps, input.agentMode === "detail" ? input.detailOptions : undefined);
+                    const compiled = compileToolCall(call, snapshot, { runId: input.runId, turnId: input.turnId }, toolSteps, input.agentMode === "detail" ? input.detailOptions : undefined, input.prompt);
                     if (compiled.kind === "direct") {
                         const output = JSON.stringify(compiled.output);
                         toolOutputs.push(functionOutput(callId, output));
@@ -167,6 +167,11 @@ function buildInstructions(mode: "general" | "detail", detailOptions: AgentDetai
         common.push(
             "You are in ecommerce detail-page mode. Convert the user request and ordered references into one coherent detail-page workflow.",
             "Use canvas_create_detail_workflow for a new detail page. Supply a complete style summary and 1-12 ordered screens with a concrete title, goal and production-ready image prompt for each screen.",
+            "Treat an existing detail workflow as an editable resource. For 'add one more screen', call canvas_add_detail_screen exactly once; never create a new workflow and never regenerate existing screens.",
+            "For a requested change to one screen, call canvas_update_detail_screen. It regenerates only that screen in place and refreshes the long image; never recreate the workflow.",
+            "For deleting one screen, call canvas_remove_detail_screen. It preserves all remaining generated images and refreshes the long image.",
+            "For reordering screens, call canvas_move_detail_screen. It changes ordering and layout only, generates zero images, and refreshes the long image.",
+            "Call canvas_regenerate_detail_workflow only when the user explicitly says to regenerate, redo or recreate every screen. Pass style_summary when the user also requests a new global style. Adding, inserting, editing, retrying or deleting one screen must never call it.",
             `The customer selected generation_mode=${selectedMode}, execution_mode=${selectedExecution}, compose_when_complete=${detailOptions.composeWhenComplete}. These UI selections are authoritative and must be used exactly.`,
             "Default to 6 screens unless the user requests another count.",
             "Precise step mode generates one screen and waits for user confirmation. Precise continuous mode generates screens sequentially. Rough mode generates the first screen, then the remaining screens concurrently.",
