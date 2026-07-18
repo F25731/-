@@ -2,7 +2,7 @@
 
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, Bot, Check, CheckCircle2, ChevronDown, CircleAlert, ImagePlus, Layers3, LoaderCircle, PanelRightClose, Plus, RotateCcw, Settings2, Square, Trash2, UserRound, X, XCircle } from "lucide-react";
-import { App, Button, Modal, Switch, Tooltip } from "antd";
+import { App, Button, Modal, Segmented, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 import { Streamdown } from "streamdown";
 
@@ -24,6 +24,7 @@ import {
     type CanvasAssistantReference,
     type CanvasAssistantSession,
     type CanvasConnection,
+    type CanvasDetailAgentOptions,
     type CanvasNodeData,
 } from "../types";
 const PANEL_MOTION_MS = 500;
@@ -31,6 +32,9 @@ const PANEL_MOTION_SECONDS = PANEL_MOTION_MS / 1000;
 const AGENT_MODEL_STORAGE_KEY = "canvas-agent:selected-model-v1";
 const AGENT_FULL_ACCESS_STORAGE_KEY = "canvas-agent:full-access-v1";
 const AGENT_MODE_STORAGE_KEY = "canvas-agent:mode-v1";
+const DETAIL_GENERATION_MODE_STORAGE_KEY = "canvas-agent:detail-generation-mode-v1";
+const DETAIL_EXECUTION_MODE_STORAGE_KEY = "canvas-agent:detail-execution-mode-v1";
+const DETAIL_COMPOSE_STORAGE_KEY = "canvas-agent:detail-compose-v1";
 const MAX_AGENT_ATTACHMENTS = 6;
 
 type AgentComposerReference = CanvasAssistantReference & {
@@ -125,6 +129,9 @@ function CanvasAssistantPanelContent({
     const [uploadedReferences, setUploadedReferences] = useState<AgentComposerReference[]>([]);
     const [agentModel, setAgentModel] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem(AGENT_MODEL_STORAGE_KEY) || ""));
     const [agentMode, setAgentMode] = useState<"general" | "detail">(() => (typeof window !== "undefined" && window.localStorage.getItem(AGENT_MODE_STORAGE_KEY) === "detail" ? "detail" : "general"));
+    const [detailGenerationMode, setDetailGenerationMode] = useState<CanvasDetailAgentOptions["generationMode"]>(() => (typeof window !== "undefined" && window.localStorage.getItem(DETAIL_GENERATION_MODE_STORAGE_KEY) === "rough" ? "rough" : "precise"));
+    const [detailExecutionMode, setDetailExecutionMode] = useState<CanvasDetailAgentOptions["executionMode"]>(() => (typeof window !== "undefined" && window.localStorage.getItem(DETAIL_EXECUTION_MODE_STORAGE_KEY) === "step" ? "step" : "continuous"));
+    const [detailComposeWhenComplete, setDetailComposeWhenComplete] = useState(() => typeof window === "undefined" || window.localStorage.getItem(DETAIL_COMPOSE_STORAGE_KEY) !== "false");
     const [fullAccess, setFullAccess] = useState(() => (typeof window === "undefined" ? true : window.localStorage.getItem(AGENT_FULL_ACCESS_STORAGE_KEY) !== "false"));
     const [localSessions, setLocalSessions] = useState<CanvasAssistantSession[]>(() => (sessions.length ? sessions : [createSession()]));
     const [localActiveSessionId, setLocalActiveSessionId] = useState<string | null>(activeSessionId);
@@ -160,6 +167,10 @@ function CanvasAssistantPanelContent({
     const composerReferences = useMemo<AgentComposerReference[]>(() => [...selectedReferences, ...uploadedReferences], [selectedReferences, uploadedReferences]);
     const hasUploadingReference = uploadedReferences.some((item) => item.uploadStatus === "uploading");
     const iconButtonStyle = { color: theme.node.muted };
+    const detailOptions = useMemo<CanvasDetailAgentOptions>(
+        () => ({ generationMode: detailGenerationMode, executionMode: detailExecutionMode, composeWhenComplete: detailComposeWhenComplete }),
+        [detailComposeWhenComplete, detailExecutionMode, detailGenerationMode],
+    );
 
     useEffect(() => {
         if (agentModels.some((item) => item.name === agentModel)) return;
@@ -367,7 +378,7 @@ function CanvasAssistantPanelContent({
         cleanupImages({ sessions: [session] });
     };
 
-    const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[], savedAgentMode: "general" | "detail" = agentMode) => {
+    const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[], savedAgentMode: "general" | "detail" = agentMode, savedDetailOptions: CanvasDetailAgentOptions = detailOptions) => {
         if (isRunning || hasUploadingReference) return;
         const session = activeSession || createSession("Agent 会话");
         if (!activeSession) {
@@ -376,14 +387,28 @@ function CanvasAssistantPanelContent({
         }
         const refs = savedReferences || composerReferences.filter((item) => item.uploadStatus !== "error");
         const runId = `agent-run-${nanoid()}`;
-        appendMessage(session.id, { id: nanoid(), runId, role: "user", mode: "agent", agentMode: savedAgentMode, text, references: refs });
+        appendMessage(session.id, { id: nanoid(), runId, role: "user", mode: "agent", agentMode: savedAgentMode, detailOptions: savedAgentMode === "detail" ? savedDetailOptions : undefined, text, references: refs });
         setPrompt("");
         setIsRunning(true);
         const controller = new AbortController();
         abortControllerRef.current = controller;
         const assistantId = nanoid();
         const turnId = `agent-turn-${nanoid()}`;
-        appendMessage(session.id, { id: assistantId, runId, turnId, role: "assistant", mode: "agent", agentMode: savedAgentMode, text: "", isLoading: true, startedAt: Date.now(), logs: ["开始处理当前任务"], activityText: "正在读取画布", events: [] });
+        appendMessage(session.id, {
+            id: assistantId,
+            runId,
+            turnId,
+            role: "assistant",
+            mode: "agent",
+            agentMode: savedAgentMode,
+            detailOptions: savedAgentMode === "detail" ? savedDetailOptions : undefined,
+            text: "",
+            isLoading: true,
+            startedAt: Date.now(),
+            logs: ["开始处理当前任务"],
+            activityText: "正在读取画布",
+            events: [],
+        });
         try {
             const canvasNodeIds = new Set(nodes.map((node) => node.id));
             const snapshot = buildCanvasAgentSnapshot({
@@ -400,6 +425,7 @@ function CanvasAssistantPanelContent({
                 signal: controller.signal,
                 agentModel,
                 agentMode: savedAgentMode,
+                detailOptions: savedAgentMode === "detail" ? savedDetailOptions : undefined,
                 runId,
                 turnId,
                 onEvent: (event) => {
@@ -411,8 +437,9 @@ function CanvasAssistantPanelContent({
                 },
                 onToolRequest: async (request) => {
                     setMessageToolRequest(session.id, assistantId, request);
-                    appendMessageLog(session.id, assistantId, fullAccess ? `正在执行：${agentToolSummary(request) || request.description}` : "等待批准画布工具");
-                    if (fullAccess) return executeAgentTool(session.id, assistantId, request);
+                    const detailWorkflowAccess = savedAgentMode === "detail" && request.name === "canvas.detailWorkflow";
+                    appendMessageLog(session.id, assistantId, fullAccess || detailWorkflowAccess ? `正在执行：${agentToolSummary(request) || request.description}` : "等待批准画布工具");
+                    if (fullAccess || detailWorkflowAccess) return executeAgentTool(session.id, assistantId, request);
                     return new Promise<CanvasAgentApplyResult>((resolve) => pendingApprovalRef.current.set(request.toolCallId || request.id, { resolve }));
                 },
             });
@@ -444,7 +471,7 @@ function CanvasAssistantPanelContent({
         const index = messages.findIndex((item) => item.id === message.id);
         const userIndex = messages.slice(0, index).findLastIndex((item) => item.role === "user");
         const user = messages[userIndex];
-        if (user) void sendMessage(user.text, user.references, user.agentMode || "general");
+        if (user) void sendMessage(user.text, user.references, user.agentMode || "general", user.detailOptions || detailOptions);
     };
 
     const stopAgentTurn = () => {
@@ -651,6 +678,7 @@ function CanvasAssistantPanelContent({
                         config={effectiveConfig}
                         agentModel={agentModel}
                         agentMode={agentMode}
+                        detailOptions={detailOptions}
                         onPromptChange={setPrompt}
                         onSubmit={submit}
                         onStop={stopAgentTurn}
@@ -661,6 +689,14 @@ function CanvasAssistantPanelContent({
                         onAgentModeChange={(mode) => {
                             setAgentMode(mode);
                             window.localStorage.setItem(AGENT_MODE_STORAGE_KEY, mode);
+                        }}
+                        onDetailOptionsChange={(next) => {
+                            setDetailGenerationMode(next.generationMode);
+                            setDetailExecutionMode(next.executionMode);
+                            setDetailComposeWhenComplete(next.composeWhenComplete);
+                            window.localStorage.setItem(DETAIL_GENERATION_MODE_STORAGE_KEY, next.generationMode);
+                            window.localStorage.setItem(DETAIL_EXECUTION_MODE_STORAGE_KEY, next.executionMode);
+                            window.localStorage.setItem(DETAIL_COMPOSE_STORAGE_KEY, String(next.composeWhenComplete));
                         }}
                         onAddFiles={addReferenceFiles}
                         onMissingConfig={() => openConfigDialog(true)}
@@ -704,11 +740,13 @@ function AssistantComposer({
     config,
     agentModel,
     agentMode,
+    detailOptions,
     onPromptChange,
     onSubmit,
     onStop,
     onAgentModelChange,
     onAgentModeChange,
+    onDetailOptionsChange,
     onAddFiles,
     onMissingConfig,
     onRemoveReference,
@@ -720,11 +758,13 @@ function AssistantComposer({
     config: AiConfig;
     agentModel: string;
     agentMode: "general" | "detail";
+    detailOptions: CanvasDetailAgentOptions;
     onPromptChange: (prompt: string) => void;
     onSubmit: () => void;
     onStop: () => void;
     onAgentModelChange: (model: string) => void;
     onAgentModeChange: (mode: "general" | "detail") => void;
+    onDetailOptionsChange: (options: CanvasDetailAgentOptions) => void;
     onAddFiles: (files: FileList | File[] | null) => void | Promise<void>;
     onMissingConfig: () => void;
     onRemoveReference: (id: string) => void;
@@ -761,6 +801,36 @@ function AssistantComposer({
                     style={{ color: theme.node.text }}
                     placeholder={agentMode === "detail" ? "描述商品、平台、风格、屏数和生成方式" : "告诉 Agent 你想怎样整理、修改或连接当前画布"}
                 />
+                {agentMode === "detail" ? (
+                    <div className="mt-2 grid grid-cols-2 gap-2 border-t pt-2" style={{ borderColor: theme.node.stroke }}>
+                        <Segmented
+                            block
+                            size="small"
+                            value={detailOptions.generationMode}
+                            disabled={isRunning}
+                            options={[
+                                { label: "精细", value: "precise" },
+                                { label: "粗略", value: "rough" },
+                            ]}
+                            onChange={(value) => onDetailOptionsChange({ ...detailOptions, generationMode: value as CanvasDetailAgentOptions["generationMode"] })}
+                        />
+                        <Segmented
+                            block
+                            size="small"
+                            value={detailOptions.executionMode}
+                            disabled={isRunning}
+                            options={[
+                                { label: "逐屏", value: "step" },
+                                { label: "自动", value: "continuous" },
+                            ]}
+                            onChange={(value) => onDetailOptionsChange({ ...detailOptions, executionMode: value as CanvasDetailAgentOptions["executionMode"] })}
+                        />
+                        <label className="col-span-2 flex h-7 items-center justify-between px-1 text-xs" style={{ color: theme.node.muted }}>
+                            完成后合成长图
+                            <Switch size="small" checked={detailOptions.composeWhenComplete} disabled={isRunning} onChange={(checked) => onDetailOptionsChange({ ...detailOptions, composeWhenComplete: checked })} />
+                        </label>
+                    </div>
+                ) : null}
                 <div className="mt-2 flex items-center justify-between gap-2">
                     <div className="canvas-composer-tools flex min-w-0 flex-1 items-center gap-1">
                         <input

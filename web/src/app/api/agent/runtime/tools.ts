@@ -1,6 +1,6 @@
 import { buildImageTaskOperations, buildWorkflowLayoutOperations, nextIndependentTaskOrigin, type CanvasOperationPayload, type ImageGenerationTask } from "./canvas-layout";
 import { buildDetailWorkflowAction, buildDetailWorkflowOperations } from "./detail-layout";
-import type { AgentCanvasSnapshot, AgentToolRequest, ResponseOutputItem } from "./types";
+import type { AgentCanvasSnapshot, AgentDetailOptions, AgentToolRequest, ResponseOutputItem } from "./types";
 
 export const CANVAS_AGENT_TOOLS = [
     tool("canvas_read", "Read the current canvas state, selection, connections, models and image job states.", {
@@ -167,10 +167,10 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
 
 export type CompiledTool = { kind: "direct"; output: Record<string, unknown> } | { kind: "browser"; request: AgentToolRequest };
 
-export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasSnapshot, ids: { runId: string; turnId: string }, step: number): CompiledTool {
+export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasSnapshot, ids: { runId: string; turnId: string }, step: number, detailOptions?: AgentDetailOptions): CompiledTool {
     const name = String(item.name || "");
     const toolCallId = String(item.call_id || item.id || `tool-${step}`);
-    const args = parseArguments(item.arguments);
+    const args = applyDetailOptions(name, parseArguments(item.arguments), detailOptions);
     logAgent(ids.runId, "tool.arguments", { toolCallId, name, arguments: args });
 
     if (name === "canvas_read") {
@@ -243,6 +243,16 @@ export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasS
             operation,
             status: "pending",
         },
+    };
+}
+
+function applyDetailOptions(name: string, args: Record<string, unknown>, detailOptions?: AgentDetailOptions) {
+    if (!detailOptions || !name.includes("detail")) return args;
+    return {
+        ...args,
+        generation_mode: detailOptions.generationMode,
+        execution_mode: detailOptions.executionMode,
+        compose_when_complete: detailOptions.composeWhenComplete,
     };
 }
 

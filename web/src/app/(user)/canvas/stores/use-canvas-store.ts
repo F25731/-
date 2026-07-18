@@ -271,6 +271,8 @@ function normalizeAssistantMessages(value: unknown): CanvasAssistantSession["mes
             turnId: safeString(raw?.turnId, "", 120) || undefined,
             role: raw?.role === "assistant" ? "assistant" : "user",
             mode: "agent" as const,
+            agentMode: raw?.agentMode === "detail" ? "detail" : "general",
+            detailOptions: normalizeDetailOptions(raw?.detailOptions),
             text: safeString(raw?.text, "", MAX_ASSISTANT_TEXT_LENGTH),
             isLoading: undefined,
             startedAt: undefined,
@@ -301,6 +303,15 @@ function normalizeAssistantMessages(value: unknown): CanvasAssistantSession["mes
             events: normalizeAgentEvents(raw?.events),
         };
     });
+}
+
+function normalizeDetailOptions(value: CanvasAssistantSession["messages"][number]["detailOptions"]) {
+    if (!value || typeof value !== "object") return undefined;
+    return {
+        generationMode: value.generationMode === "rough" ? ("rough" as const) : ("precise" as const),
+        executionMode: value.executionMode === "step" ? ("step" as const) : ("continuous" as const),
+        composeWhenComplete: value.composeWhenComplete !== false,
+    };
 }
 
 function normalizeToolRequests(value: unknown): CanvasAssistantSession["messages"][number]["toolRequests"] {

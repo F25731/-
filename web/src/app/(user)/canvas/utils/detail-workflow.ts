@@ -6,6 +6,12 @@ import type { CanvasConnection, CanvasNodeData } from "../types";
 
 export type DetailWorkflowMode = "precise" | "rough";
 export type DetailWorkflowExecutionMode = "step" | "continuous";
+export type DetailReferenceRole = "product" | "first-screen" | "previous-screen";
+
+export type DetailReferencePlanItem = {
+    nodeId: string;
+    role: DetailReferenceRole;
+};
 
 export type DetailWorkflowScreen = {
     index: number;
@@ -39,21 +45,30 @@ export function detailResultForConfig(nodes: CanvasNodeData[], connections: Canv
     return nodes.find((node) => targetIds.has(node.id) && node.type === "image");
 }
 
-export function buildDetailImagePrompt(input: { styleSummary: string; screen: DetailWorkflowScreen; screenCount: number; generationMode: DetailWorkflowMode; includeCurrent?: boolean }) {
-    const { styleSummary, screen, screenCount, generationMode, includeCurrent } = input;
+export function buildDetailReferencePlan(input: { screenIndex: number; generationMode: DetailWorkflowMode; originalReferenceIds: string[]; firstResultId?: string; previousResultId?: string; limit: number }) {
+    const { screenIndex, generationMode, originalReferenceIds, firstResultId, previousResultId, limit } = input;
+    const candidates: DetailReferencePlanItem[] =
+        screenIndex <= 1
+            ? originalReferenceIds.map((nodeId) => ({ nodeId, role: "product" }))
+            : generationMode === "rough" || screenIndex === 2
+              ? firstResultId
+                  ? [{ nodeId: firstResultId, role: "first-screen" }]
+                  : []
+              : [...(firstResultId ? [{ nodeId: firstResultId, role: "first-screen" as const }] : []), ...(previousResultId ? [{ nodeId: previousResultId, role: "previous-screen" as const }] : [])];
+    const seen = new Set<string>();
+    return candidates.filter((item) => item.nodeId && !seen.has(item.nodeId) && seen.add(item.nodeId)).slice(0, Math.max(0, limit));
+}
+
+export function buildDetailImagePrompt(input: { styleSummary: string; screen: DetailWorkflowScreen; screenCount: number; generationMode: DetailWorkflowMode; references: DetailReferencePlanItem[] }) {
+    const { styleSummary, screen, screenCount, generationMode, references } = input;
     const isFirst = screen.index === 1;
     const isLast = screen.index >= screenCount;
-    const referenceGuide = isFirst
-        ? "参考图来自用户上传的商品图或竞品图。准确保持商品外观、结构、材质、颜色和品牌特征，并以第一屏建立整套详情页的视觉基调。"
-        : generationMode === "precise"
-          ? "参考图优先级：第一张是首屏完整图，用于锁定整套详情页风格；第二张是上一屏完整图，用于延续颜色、图案、背景走势、光影和视觉节奏。其余图片是商品或竞品参考。"
-          : "参考图优先级：第一张是首屏完整图，用于统一风格；其余图片是商品或竞品参考。粗略模式下各屏可以并发，但必须保持同一商品和同一视觉语言。";
-    const currentGuide = includeCurrent ? "如果包含当前屏旧图，只用于理解原内容和局部修改，不得覆盖首屏与上一屏的风格优先级。" : "";
+    const referenceGuide = buildReferenceGuide(references, generationMode);
     const continuity = isFirst ? "这是第一屏主视觉，底部应自然、干净且可延展，为后续屏幕向下拼接留出视觉承接。" : "这是详情页长图中的后续内容屏，不是首屏海报。顶部自然承接上一屏，但不要复制上一屏的主体、标题、图标或具体排版。";
     return [
-        screen.prompt,
+        `参考图顺序（唯一有效，以本段为准）：\n${referenceGuide}`,
+        `本屏内容与排版要求：\n${screen.prompt}`,
         `整体风格：\n${styleSummary}`,
-        `参考图说明：\n${referenceGuide}${currentGuide ? `\n${currentGuide}` : ""}`,
         `连续性要求：\n${continuity}`,
         "生成一张完整的竖版电商详情页屏幕，不要生成拼贴图、九宫格、分镜草图或半截页面。",
         "商品主体、卖点标题、参数文字和图标放在画面主体区域，避免紧贴上下边缘。",
@@ -63,6 +78,21 @@ export function buildDetailImagePrompt(input: { styleSummary: string; screen: De
     ]
         .filter(Boolean)
         .join("\n\n");
+}
+
+function buildReferenceGuide(references: DetailReferencePlanItem[], generationMode: DetailWorkflowMode) {
+    if (!references.length) return "本屏没有传入参考图，请严格依据本屏要求和整体风格生成。";
+    const lines = references.map((reference, index) => {
+        const label = `图${index + 1}`;
+        if (reference.role === "product") return `${label}：用户提供的原始商品或竞品参考，用于保持商品外观、结构、材质、颜色、包装和品牌特征。`;
+        if (reference.role === "previous-screen") return `${label}：上一屏完整结果，用于衔接顶部布局、背景走势、光影和视觉节奏。`;
+        return `${label}：已完成的详情页首屏，用于锁定整套详情页的商品形象和视觉基调。`;
+    });
+    if (generationMode === "rough" && references.some((reference) => reference.role === "first-screen")) {
+        lines.push("当前为粗略模式，后续屏幕只以首屏统一风格，不假定存在上一屏参考图。");
+    }
+    lines.push("不要把参考图编号理解为额外商品；本屏要求中若出现与本段冲突的图号描述，一律忽略冲突描述。");
+    return lines.join("\n");
 }
 
 export async function composeVerticalImageBlob(urls: string[]) {

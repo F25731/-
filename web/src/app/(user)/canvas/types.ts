@@ -60,6 +60,8 @@ export type CanvasNodeMetadata = {
     detailGenerationMode?: "precise" | "rough";
     detailExecutionMode?: "step" | "continuous";
     detailReferenceNodeIds?: string[];
+    detailActiveReferenceNodeIds?: string[];
+    detailReferenceRoles?: Array<"product" | "first-screen" | "previous-screen">;
     detailPromptNodeId?: string;
     detailAttempt?: number;
 };
@@ -88,6 +90,12 @@ export type CanvasAssistantReference = {
     remoteUrl?: string;
     storageKey?: string;
     text?: string;
+};
+
+export type CanvasDetailAgentOptions = {
+    generationMode: "precise" | "rough";
+    executionMode: "step" | "continuous";
+    composeWhenComplete: boolean;
 };
 
 export type CanvasAgentToolRequest = {
@@ -202,6 +210,7 @@ export type CanvasAssistantMessage = {
     role: "user" | "assistant";
     mode: "agent";
     agentMode?: "general" | "detail";
+    detailOptions?: CanvasDetailAgentOptions;
     text: string;
     isLoading?: boolean;
     startedAt?: number;

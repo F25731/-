@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
     const baseUrl = String(payload?.baseUrl || "").trim();
     const model = String(payload?.modelId || payload?.model || "").trim();
     const agentMode = payload?.agentMode === "detail" ? "detail" : "general";
+    const detailOptions = sanitizeDetailOptions(payload?.detailOptions);
     const runId = safeId(payload?.runId, "agent-run");
     const turnId = safeId(payload?.turnId, "agent-turn");
     const snapshot = sanitizeSnapshot(payload?.snapshot);
@@ -57,6 +58,7 @@ export async function POST(request: NextRequest) {
                 apiKey,
                 model,
                 agentMode,
+                detailOptions,
                 signal: runAbortController.signal,
                 emit,
             })
@@ -89,6 +91,14 @@ export async function POST(request: NextRequest) {
             "X-Accel-Buffering": "no",
         },
     });
+}
+
+function sanitizeDetailOptions(value: AgentRunPayload["detailOptions"]) {
+    return {
+        generationMode: value?.generationMode === "rough" ? ("rough" as const) : ("precise" as const),
+        executionMode: value?.executionMode === "step" ? ("step" as const) : ("continuous" as const),
+        composeWhenComplete: value?.composeWhenComplete !== false,
+    };
 }
 
 function isClosedStreamError(error: unknown) {

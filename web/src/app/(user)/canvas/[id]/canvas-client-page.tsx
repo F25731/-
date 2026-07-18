@@ -41,7 +41,7 @@ import { useCanvasStore } from "../stores/use-canvas-store";
 import { applyCanvasOperation, type CanvasOperation } from "../utils/canvas-operations";
 import { findOpenNodePosition, minimallyRevealRect } from "../utils/canvas-layout";
 import { startCanvasProjectLock } from "../utils/canvas-tab-lock";
-import { buildDetailImagePrompt, composeDetailLongImage, detailResultForConfig, detailWorkflowConfigs, detailWorkflowResults, type DetailWorkflowOperation, type DetailWorkflowScreen } from "../utils/detail-workflow";
+import { buildDetailImagePrompt, buildDetailReferencePlan, composeDetailLongImage, detailResultForConfig, detailWorkflowConfigs, detailWorkflowResults, type DetailWorkflowOperation, type DetailWorkflowScreen } from "../utils/detail-workflow";
 import { MAX_IMAGE_GENERATION_COUNT } from "@/components/image-settings-panel";
 import {
     CanvasNodeType,
@@ -2793,10 +2793,17 @@ function InfiniteCanvasPage() {
                 const finished = detailWorkflowResults(nodesRef.current, workflowId);
                 const firstResult = finished.find((node) => node.metadata?.detailScreenIndex === 1);
                 const previousResult = finished.find((node) => node.metadata?.detailScreenIndex === index - 1);
-                const continuity = index <= 1 ? [] : generationMode === "precise" ? [firstResult?.id, previousResult?.id] : [firstResult?.id];
                 const model = config.metadata?.model || effectiveConfig.imageModel || effectiveConfig.model;
                 const limit = imageReferenceLimit(effectiveConfig, model);
-                const referenceIds = [...continuity, ...originalReferences].filter((id, itemIndex, values): id is string => Boolean(id) && values.indexOf(id) === itemIndex).slice(0, limit);
+                const referencePlan = buildDetailReferencePlan({
+                    screenIndex: index,
+                    generationMode,
+                    originalReferenceIds: originalReferences,
+                    firstResultId: firstResult?.id,
+                    previousResultId: previousResult?.id,
+                    limit,
+                });
+                const referenceIds = referencePlan.map((item) => item.nodeId);
                 const screen: DetailWorkflowScreen = {
                     index,
                     title: promptNode.title,
@@ -2808,6 +2815,7 @@ function InfiniteCanvasPage() {
                     screen,
                     screenCount: Number(config.metadata?.detailScreenCount || configs.length),
                     generationMode,
+                    references: referencePlan,
                 });
                 const composerContent = [promptId, ...referenceIds].map((id) => `@[node:${id}]`).join("\n");
                 commitNodes((items) =>
@@ -2815,7 +2823,19 @@ function InfiniteCanvasPage() {
                         node.id === promptId
                             ? { ...node, metadata: { ...node.metadata, content: fullPrompt, status: NODE_STATUS_SUCCESS } }
                             : node.id === config.id
-                              ? { ...node, metadata: { ...node.metadata, composerContent, status: "idle", errorDetails: undefined, detailGenerationMode: generationMode, detailExecutionMode: executionMode } }
+                              ? {
+                                    ...node,
+                                    metadata: {
+                                        ...node.metadata,
+                                        composerContent,
+                                        status: "idle",
+                                        errorDetails: undefined,
+                                        detailGenerationMode: generationMode,
+                                        detailExecutionMode: executionMode,
+                                        detailActiveReferenceNodeIds: referenceIds,
+                                        detailReferenceRoles: referencePlan.map((item) => item.role),
+                                    },
+                                }
                               : node,
                     ),
                 );
@@ -2871,24 +2891,40 @@ function InfiniteCanvasPage() {
                 if (!target) return { ok: false, message: `没有找到第 ${operation.screenIndex || 0} 屏` };
                 executionFailed = !(await generateConfig(target, true));
             } else if (generationMode === "rough") {
-                const firstDone = detailResultForConfig(nodesRef.current, connectionsRef.current, configs[0].id);
-                if (firstDone?.metadata?.status === NODE_STATUS_ERROR && !firstDone.metadata.content) {
-                    return {
-                        ok: false,
-                        message: "首屏生成失败，请先重试首屏失败节点",
-                        generationRunIds,
-                        imageJobIds,
-                        nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [firstDone.id], viewport: viewportRef.current },
-                    };
+                if (executionMode === "step") {
+                    const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR && !output.metadata.content);
+                    if (failed) {
+                        return {
+                            ok: false,
+                            message: `第 ${failed.metadata?.detailScreenIndex || 0} 屏生成失败，请先重试该失败节点`,
+                            generationRunIds,
+                            imageJobIds,
+                            nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [failed.id], viewport: viewportRef.current },
+                        };
+                    }
+                    const pending = configs.filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
+                    const target = pending[0];
+                    if (target) executionFailed = !(await generateConfig(target));
+                } else {
+                    const firstDone = detailResultForConfig(nodesRef.current, connectionsRef.current, configs[0].id);
+                    if (firstDone?.metadata?.status === NODE_STATUS_ERROR && !firstDone.metadata.content) {
+                        return {
+                            ok: false,
+                            message: "首屏生成失败，请先重试首屏失败节点",
+                            generationRunIds,
+                            imageJobIds,
+                            nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [firstDone.id], viewport: viewportRef.current },
+                        };
+                    }
+                    if (!firstDone?.metadata?.content) {
+                        const ok = await generateConfig(configs[0]);
+                        if (!ok) return { ok: false, message: "首屏生成失败，粗略模式已停止", generationRunIds, imageJobIds };
+                    }
+                    configs = detailWorkflowConfigs(nodesRef.current, workflowId);
+                    const remaining = configs.slice(1).filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
+                    const results = await Promise.all(remaining.map((config) => generateConfig(config)));
+                    executionFailed = results.some((ok) => !ok) || configs.some((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)?.metadata?.status === NODE_STATUS_ERROR);
                 }
-                if (!firstDone?.metadata?.content) {
-                    const ok = await generateConfig(configs[0]);
-                    if (!ok) return { ok: false, message: "首屏生成失败，粗略模式已停止", generationRunIds, imageJobIds };
-                }
-                configs = detailWorkflowConfigs(nodesRef.current, workflowId);
-                const remaining = configs.slice(1).filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
-                const results = await Promise.all(remaining.map((config) => generateConfig(config)));
-                executionFailed = results.some((ok) => !ok) || configs.some((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)?.metadata?.status === NODE_STATUS_ERROR);
             } else {
                 const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR && !output.metadata.content);
                 if (failed) {

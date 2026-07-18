@@ -1,5 +1,5 @@
 import { readUserModelConfig, type AiConfig, type StoredUserModel } from "@/stores/use-config-store";
-import type { CanvasAgentApplyResult, CanvasAgentEventType, CanvasAgentToolRequest, CanvasConnection, CanvasNodeData } from "@/app/(user)/canvas/types";
+import type { CanvasAgentApplyResult, CanvasAgentEventType, CanvasAgentToolRequest, CanvasConnection, CanvasDetailAgentOptions, CanvasNodeData } from "@/app/(user)/canvas/types";
 
 export type CanvasAgentSnapshot = {
     projectId?: string;
@@ -172,11 +172,20 @@ export async function requestCanvasAgentTurnStream(
         onToolRequest: (request: CanvasAgentToolRequest) => Promise<CanvasAgentApplyResult>;
         agentModel?: string;
         agentMode?: "general" | "detail";
+        detailOptions?: CanvasDetailAgentOptions;
         runId?: string;
         turnId?: string;
     },
 ) {
-    const payload = { ...buildAgentTurnPayload(config, prompt, snapshot, history, options.agentModel), agentMode: options.agentMode || "general", summary, stream: true, runId: options.runId, turnId: options.turnId };
+    const payload = {
+        ...buildAgentTurnPayload(config, prompt, snapshot, history, options.agentModel),
+        agentMode: options.agentMode || "general",
+        detailOptions: options.agentMode === "detail" ? options.detailOptions : undefined,
+        summary,
+        stream: true,
+        runId: options.runId,
+        turnId: options.turnId,
+    };
     const response = await fetch("/api/agent/turn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

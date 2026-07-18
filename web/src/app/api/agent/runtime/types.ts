@@ -54,9 +54,16 @@ export type AgentRunPayload = {
     baseUrl?: string;
     apiKey?: string;
     agentMode?: "general" | "detail";
+    detailOptions?: AgentDetailOptions;
     snapshot?: AgentCanvasSnapshot;
     summary?: string;
     history?: Array<{ role?: string; text?: string }>;
+};
+
+export type AgentDetailOptions = {
+    generationMode: "precise" | "rough";
+    executionMode: "step" | "continuous";
+    composeWhenComplete: boolean;
 };
 
 export type AgentToolRequest = {
