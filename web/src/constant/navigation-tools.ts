@@ -1,4 +1,4 @@
-import { GalleryVerticalEnd, Maximize2, MessageSquareText, Search, Video } from "lucide-react";
+import { GalleryVerticalEnd, Maximize2, MessageSquareText, Search } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -10,11 +10,6 @@ export const navigationTools = [
         slug: "detail",
         label: "详情图工作台",
         icon: GalleryVerticalEnd,
-    },
-    {
-        slug: "video",
-        label: "视频工作台",
-        icon: Video,
     },
     {
         slug: "parse",

@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     if (!baseUrls.length) return Response.json({ code: 1, data: null, msg: "请先配置后台模型请求地址" }, { status: 400 });
     if (!apiKey) return Response.json({ code: 1, data: null, msg: "请先填写 API Key" }, { status: 400 });
 
-    const catalogs = Object.fromEntries(await Promise.all(baseUrls.map(async (baseUrl) => [baseUrl, await fetchModelIds(baseUrl, apiKey)])));
+    const catalogs: Record<string, string[]> = Object.fromEntries(await Promise.all(baseUrls.map(async (baseUrl) => [baseUrl, await fetchModelIds(baseUrl, apiKey)])));
     if (!Object.values(catalogs).some((ids) => ids.length > 0)) return Response.json({ code: 1, data: null, msg: "接口没有返回可识别的模型列表" }, { status: 400 });
     return Response.json({ code: 0, data: catalogs, msg: "ok" });
 }
@@ -42,7 +42,7 @@ async function fetchModelIds(baseUrl: string, apiKey: string) {
     }
 }
 
-function readModelIds(payload: ModelListPayload | null) {
+function readModelIds(payload: ModelListPayload | null): string[] {
     const data = Array.isArray(payload?.data) ? payload.data : [];
     return Array.from(
         new Set(

@@ -108,27 +108,19 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
             </div>
 
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker
-                    className="canvas-compact-control h-10"
-                    config={config}
-                    value={node.metadata?.model || config.imageModel}
-                    onChange={selectImageModel}
-                    onMissingConfig={() => openConfigDialog(true)}
-                    fullWidth
-                    type="image"
-                />
+                <ModelPicker className="canvas-compact-control h-10" config={config} value={node.metadata?.model || config.imageModel} onChange={selectImageModel} onMissingConfig={() => openConfigDialog(true)} fullWidth type="image" />
                 {mode === "image" ? (
-                    <CanvasImageSettingsPopover config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
+                    <CanvasImageSettingsPopover
+                        config={config}
+                        placement="topRight"
+                        autoAdjustOverflow={false}
+                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
+                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                    />
                 ) : null}
             </div>
 
-            <Button
-                type="primary"
-                className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
-                disabled={isRunning || !canGenerate}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => onGenerate(node.id)}
-            >
+            <Button type="primary" className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg" disabled={isRunning || !canGenerate} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
                 <span className="inline-flex items-center gap-1.5">
                     {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
                     <span>生成</span>
@@ -194,7 +186,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
                                     ) : (
                                         <div className="flex h-full flex-col justify-center rounded-xl border border-dashed px-4 text-center text-xs leading-5 opacity-45" style={{ borderColor: theme.node.stroke }}>
                                             <Edit3 className="mx-auto mb-2 size-5" />
-                                            选择一条文本后在这里编辑                                        </div>
+                                            选择一条文本后在这里编辑{" "}
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -326,19 +319,14 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : globalConfig.textModel;
+    const defaultModel = mode === "image" ? globalConfig.imageModel : globalConfig.textModel;
     const model = node.metadata?.model || defaultModel || globalConfig.model || defaultConfig.model;
     return {
         ...globalConfig,
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        imageTier: mode === "image" ? normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || defaultImageTierForModel(globalConfig, model)) : node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
+        imageTier: normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || globalConfig.imageTier || defaultImageTierForModel(globalConfig, model)),
         size: mode === "image" ? normalizeImageSizeForModel(globalConfig, model, node.metadata?.size || globalConfig.size || defaultConfig.size) : node.metadata?.size || globalConfig.size || defaultConfig.size,
-        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),
     };
 }
-
-
-

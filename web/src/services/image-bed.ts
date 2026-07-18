@@ -1,5 +1,6 @@
 "use client";
 
+import { readImageMeta } from "@/lib/image-utils";
 import { getImageBlob, imageToDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 
@@ -12,6 +13,10 @@ type ImageBedUploadResponse = {
 };
 
 const IMAGE_BED_CACHE_KEY = "infinite-canvas:image-bed-reference-urls:v2";
+const MAX_REFERENCE_IMAGES = 20;
+const MAX_REFERENCE_IMAGE_BYTES = 40 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_PIXELS = 64 * 1000 * 1000;
+const REFERENCE_UPLOAD_CONCURRENCY = 4;
 const remoteUploadPromises = new Map<string, Promise<string>>();
 
 export function isRemoteImageUrl(value?: string) {
@@ -24,7 +29,10 @@ export function imageAiUrl(image: Pick<ReferenceImage, "remoteUrl" | "url" | "da
 }
 
 export async function ensureReferenceImagesRemoteUrls(images: ReferenceImage[]) {
-    return Promise.all(images.map((image) => ensureReferenceImageRemoteUrl(image)));
+    if (images.length > MAX_REFERENCE_IMAGES) {
+        throw new Error(`参考图最多支持 ${MAX_REFERENCE_IMAGES} 张`);
+    }
+    return mapWithConcurrency(images, REFERENCE_UPLOAD_CONCURRENCY, ensureReferenceImageRemoteUrl);
 }
 
 export async function ensureReferenceImageRemoteUrl(image: ReferenceImage): Promise<ReferenceImage> {
@@ -38,18 +46,31 @@ export async function ensureReferenceImageRemoteUrl(image: ReferenceImage): Prom
     const inflight = cacheKey ? remoteUploadPromises.get(cacheKey) : undefined;
     if (inflight) return { ...image, remoteUrl: await inflight };
 
-    const upload = (async () => uploadReferenceBlobToImageBed(await referenceImageBlob(image), image.name || "reference.png"))();
+    const blob = await referenceImageBlob(image);
+    const checked = await validateReferenceBlob(blob);
+    const blobKey = `blob:${checked.hash}`;
+    const blobCached = readCachedUrl(blobKey);
+    if (blobCached) return { ...image, remoteUrl: blobCached };
+
+    const inflightBlob = remoteUploadPromises.get(blobKey);
+    if (inflightBlob) return { ...image, remoteUrl: await inflightBlob };
+
+    const upload = uploadReferenceBlobToImageBed(blob, image.name || "reference.png");
+    remoteUploadPromises.set(blobKey, upload);
     if (cacheKey) remoteUploadPromises.set(cacheKey, upload);
     try {
         const remoteUrl = await upload;
         writeCachedUrl(cacheKey, remoteUrl);
+        writeCachedUrl(blobKey, remoteUrl);
         return { ...image, remoteUrl };
     } finally {
         if (cacheKey) remoteUploadPromises.delete(cacheKey);
+        remoteUploadPromises.delete(blobKey);
     }
 }
 
 export async function uploadReferenceImage(input: File | Blob): Promise<UploadedImage & { remoteUrl: string }> {
+    await validateReferenceBlob(input);
     const uploaded = await uploadImage(input);
     const name = input instanceof File ? input.name || "reference.png" : "reference.png";
     const remoteUrl = await uploadReferenceBlobToImageBed(input, name);
@@ -58,6 +79,7 @@ export async function uploadReferenceImage(input: File | Blob): Promise<Uploaded
 }
 
 export async function uploadReferenceBlobToImageBed(blob: Blob, name: string) {
+    await validateReferenceBlob(blob);
     const formData = new FormData();
     formData.set("file", blob, name || "reference.png");
 
@@ -135,4 +157,58 @@ function writeCachedUrl(key: string, url: string) {
     const cache = readCache();
     cache[key] = url;
     window.localStorage.setItem(IMAGE_BED_CACHE_KEY, JSON.stringify(cache));
+}
+
+async function validateReferenceBlob(blob: Blob) {
+    if (!blob.type.startsWith("image/")) {
+        throw new Error("参考图格式不支持");
+    }
+    if (blob.size > MAX_REFERENCE_IMAGE_BYTES) {
+        throw new Error("参考图文件过大，请换一张参考图");
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+        const meta = await readImageMeta(url);
+        if (meta.width * meta.height > MAX_REFERENCE_IMAGE_PIXELS) {
+            throw new Error("参考图像素过大，请换一张参考图");
+        }
+        return { ...meta, hash: await blobHash(blob) };
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+async function blobHash(blob: Blob) {
+    const data = await blob.arrayBuffer();
+    if (!globalThis.crypto?.subtle) {
+        return stableReferenceHash(`${blob.type}:${blob.size}:${simpleBufferHash(data)}`);
+    }
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(digest))
+        .map((value) => value.toString(16).padStart(2, "0"))
+        .join("");
+}
+
+function simpleBufferHash(data: ArrayBuffer) {
+    let hash = 2166136261;
+    const bytes = new Uint8Array(data);
+    for (let index = 0; index < bytes.length; index += 1) {
+        hash ^= bytes[index];
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T, index: number) => Promise<R>) {
+    const result = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            result[index] = await mapper(items[index], index);
+        }
+    });
+    await Promise.all(workers);
+    return result;
 }

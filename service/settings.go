@@ -362,6 +362,7 @@ func readAdminChannelError(body []byte, statusCode int, fallback string) error {
 }
 
 type safeMessageError struct {
+	code    ErrorCode
 	message string
 }
 
@@ -371,6 +372,10 @@ func (err safeMessageError) Error() string {
 
 func (err safeMessageError) SafeMessage() string {
 	return err.message
+}
+
+func (err safeMessageError) Code() string {
+	return err.code.String()
 }
 
 func modelChannelsForModel(channels []model.ModelChannel, modelName string) []model.ModelChannel {

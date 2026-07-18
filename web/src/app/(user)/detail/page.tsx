@@ -16,6 +16,7 @@ import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-s
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { detailProjectStore, readStoredDetailProjects, serializeDetailProjects } from "@/app/(user)/detail/project-storage";
+import { composeVerticalImageBlob } from "@/app/(user)/canvas/utils/detail-workflow";
 import { defaultImageTierForModel, imageReferenceLimit, normalizeImageSizeForModel, normalizeImageTierForModel, USER_MODEL_CONFIG_KEY, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
@@ -993,7 +994,7 @@ export default function DetailWorkbenchPage() {
             if (!confirmed) return;
         }
         try {
-            const blob = await composeLongImage(items.map((screen) => screen.imageUrl!));
+            const blob = await composeVerticalImageBlob(items.map((screen) => screen.imageUrl!));
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -1011,7 +1012,7 @@ export default function DetailWorkbenchPage() {
             return;
         }
         try {
-            const blob = await composeLongImage(generatedScreens.map((screen) => screen.imageUrl!));
+            const blob = await composeVerticalImageBlob(generatedScreens.map((screen) => screen.imageUrl!));
             if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
             setPreviewImageUrl(URL.createObjectURL(blob));
             setPreviewScale(1);
@@ -1845,12 +1846,8 @@ function readConfiguredDetailLlmKeys(): DetailLlmKeys {
             models?: AdminModel[];
         };
         const detailModels = (config.models || []).filter((model) => model.type === "detail_prompt");
-        if (config.mode === "aggregate") {
-            const key = String(config.aggregate?.apiKey || "").trim();
-            return key ? Object.fromEntries(detailModels.map((model) => [model.id, key])) : {};
-        }
-        const apiKeys = config.apiKeys || {};
-        return Object.fromEntries(detailModels.map((model) => [model.id, String(apiKeys[model.id] || "").trim()]).filter(([, value]) => value));
+        const key = String(config.aggregate?.apiKey || Object.values(config.apiKeys || {}).find((value) => String(value || "").trim()) || "").trim();
+        return key ? Object.fromEntries(detailModels.map((model) => [model.id, key])) : {};
     } catch {
         return {};
     }
@@ -1875,31 +1872,4 @@ function screenStatusLabel(status: DetailScreen["status"]) {
     if (status === "ready") return "已生成";
     if (status === "failed") return "失败";
     return "未生成";
-}
-
-async function composeLongImage(urls: string[]) {
-    const images = await Promise.all(urls.map(loadImage));
-    const width = Math.max(...images.map((image) => image.naturalWidth || image.width));
-    const heights = images.map((image) => Math.round(((image.naturalHeight || image.height) * width) / (image.naturalWidth || image.width || width)));
-    const height = heights.reduce((sum, value) => sum + value, 0);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器不支持长图导出");
-    let y = 0;
-    images.forEach((image, index) => {
-        context.drawImage(image, 0, y, width, heights[index]);
-        y += heights[index];
-    });
-    return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("长图导出失败"))), "image/png"));
-}
-
-function loadImage(url: string) {
-    return new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => reject(new Error("读取预览图片失败"));
-        image.src = url;
-    });
 }

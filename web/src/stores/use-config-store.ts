@@ -7,7 +7,6 @@ import { persist } from "zustand/middleware";
 import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 import { DEFAULT_IMAGE_ASPECT_VALUES, IMAGE_MODEL_TIERS, type ImageModelTier } from "@/constant/image-model-options";
-import { normalizeVideoCapabilities, type VideoModelCapabilities } from "@/constant/video-model-options";
 import { normalizeImageApiKeys, normalizeImageKeyTier, type ImageKeyTier } from "@/types/api-keys";
 
 export const DEFAULT_POOL_API_BASE_URL = "https://api.zmoapi.cn";
@@ -20,13 +19,13 @@ export type StoredUserModel = {
     id: string;
     name: string;
     modelId?: string;
-    type: "image" | "video" | "parse" | "prompt" | "detail_prompt";
+    type: "image" | "parse" | "prompt" | "detail_prompt";
     apiUrl: string;
     tierModels?: Record<string, string>;
     defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
-    videoCapabilities?: VideoModelCapabilities;
+    isDefault?: boolean;
     enabled: boolean;
 };
 
@@ -53,23 +52,19 @@ export type AiConfig = {
     imageTier: ImageKeyTier;
     model: string;
     imageModel: string;
-    videoModel: string;
     parseModel: string;
     promptModel: string;
     textModel: string;
-    videoSeconds: string;
-    vquality: string;
     systemPrompt: string;
     models: string[];
     quality: string;
     size: string;
     count: string;
-    modelTypes: Record<string, "image" | "video" | "parse" | "prompt" | "detail_prompt">;
+    modelTypes: Record<string, "image" | "parse" | "prompt" | "detail_prompt">;
     modelSupportedSizes: Record<string, string[]>;
     modelTierOptions: Record<string, string[]>;
     modelDefaultTiers: Record<string, string>;
     modelReferenceLimits: Record<string, number>;
-    modelVideoCapabilities: Record<string, Required<VideoModelCapabilities>>;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -81,12 +76,9 @@ export const defaultConfig: AiConfig = {
     imageTier: "1k",
     model: "",
     imageModel: "",
-    videoModel: "",
     parseModel: "",
     promptModel: "",
     textModel: "",
-    videoSeconds: "6",
-    vquality: "720",
     systemPrompt: "",
     models: [],
     quality: "auto",
@@ -97,7 +89,6 @@ export const defaultConfig: AiConfig = {
     modelTierOptions: {},
     modelDefaultTiers: {},
     modelReferenceLimits: {},
-    modelVideoCapabilities: {},
 };
 
 type ConfigStore = {
@@ -120,24 +111,33 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
     if (userModelConfig.models.length > 0) {
         const configuredModels = userModelConfig.models;
         const imageModels = configuredModels.filter((model) => model.type === "image").map((model) => model.name);
-        const videoModels = configuredModels.filter((model) => model.type === "video").map((model) => model.name);
         const parseModels = configuredModels.filter((model) => model.type === "parse").map((model) => model.name);
         const promptModels = configuredModels.filter((model) => model.type === "prompt").map((model) => model.name);
         const models = configuredModels.map((model) => model.name);
         const modelTypes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type]));
-        const modelVideoCapabilities: Record<string, Required<VideoModelCapabilities>> = Object.fromEntries(configuredModels.filter((model) => model.type === "video").map((model) => [model.name, normalizeVideoCapabilities(model.videoCapabilities)]));
-        const modelSupportedSizes = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "video" ? modelVideoCapabilities[model.name]?.ratios || ["16:9", "9:16", "1:1"] : model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]));
+        const modelSupportedSizes = Object.fromEntries(
+            configuredModels.map((model) => [model.name, model.supportedSizes?.length ? model.supportedSizes : [...DEFAULT_IMAGE_ASPECT_VALUES]]),
+        );
         const modelTierOptions = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]) : []]));
-        const modelDefaultTiers = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "image" ? normalizeDefaultModelTier(model.defaultTier, IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier])) : ""]));
-        const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, model.type === "video" ? normalizeVideoCapabilities(model.videoCapabilities).referenceImageLimit : normalizeReferenceLimit(model.referenceLimit)]));
+        const modelDefaultTiers = Object.fromEntries(
+            configuredModels.map((model) => [
+                model.name,
+                model.type === "image"
+                    ? normalizeDefaultModelTier(
+                          model.defaultTier,
+                          IMAGE_MODEL_TIERS.filter((tier) => model.tierModels?.[tier]),
+                      )
+                    : "",
+            ]),
+        );
+        const modelReferenceLimits = Object.fromEntries(configuredModels.map((model) => [model.name, normalizeReferenceLimit(model.referenceLimit)]));
         const imageModel = imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "";
-        const videoModel = videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "";
         const parseModel = parseModels.includes(config.parseModel) ? config.parseModel : parseModels[0] || "";
         const promptModel = promptModels.includes(config.promptModel) ? config.promptModel : promptModels[0] || "";
-        const model = models.includes(config.model) ? config.model : imageModel || videoModel || parseModel || promptModel || "";
+        const model = models.includes(config.model) ? config.model : imageModel || parseModel || promptModel || "";
         const nextImageTier = normalizeImageTierForOptions(config.imageTier, modelTierOptions[imageModel || model], modelDefaultTiers[imageModel || model]);
         const size = normalizeModelSize(config.size, modelSupportedSizes[imageModel || model]);
-        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, videoModel, parseModel, promptModel, imageTier: nextImageTier, size });
+        const runtime = resolveModelRuntimeConfig({ ...config, model, imageModel, parseModel, promptModel, imageTier: nextImageTier, size });
         return {
             ...config,
             channelMode: "local",
@@ -145,7 +145,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             apiKey: runtime.apiKey,
             model,
             imageModel,
-            videoModel,
             parseModel,
             promptModel,
             imageTier: nextImageTier,
@@ -157,7 +156,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions,
             modelDefaultTiers,
             modelReferenceLimits,
-            modelVideoCapabilities,
         };
     }
 
@@ -169,7 +167,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             baseUrl: DEFAULT_POOL_API_BASE_URL,
             model: config.model || FIXED_IMAGE_MODEL,
             imageModel: config.imageModel || FIXED_IMAGE_MODEL,
-            videoModel: config.videoModel || FIXED_IMAGE_MODEL,
             parseModel: config.parseModel || "",
             promptModel: config.promptModel || "",
             textModel: config.textModel || FIXED_IMAGE_MODEL,
@@ -178,7 +175,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions: config.modelTierOptions || {},
             modelDefaultTiers: config.modelDefaultTiers || {},
             modelReferenceLimits: config.modelReferenceLimits || {},
-            modelVideoCapabilities: config.modelVideoCapabilities || {},
         };
     }
 
@@ -191,7 +187,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             baseUrl: DEFAULT_POOL_API_BASE_URL,
             model: FIXED_IMAGE_MODEL,
             imageModel: FIXED_IMAGE_MODEL,
-            videoModel: FIXED_IMAGE_MODEL,
             parseModel: "",
             promptModel: "",
             textModel: FIXED_IMAGE_MODEL,
@@ -200,7 +195,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
             modelTierOptions: {},
             modelDefaultTiers: {},
             modelReferenceLimits: {},
-            modelVideoCapabilities: {},
         };
     }
 
@@ -210,7 +204,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         models: modelChannel.availableModels || [],
         model: config.model || modelChannel.defaultModel || modelChannel.defaultImageModel || "",
         imageModel: config.imageModel || modelChannel.defaultImageModel || "",
-        videoModel: config.videoModel || modelChannel.defaultVideoModel || "",
         parseModel: config.parseModel || "",
         promptModel: config.promptModel || "",
         textModel: config.textModel || modelChannel.defaultTextModel || "",
@@ -219,7 +212,6 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
         modelTierOptions: config.modelTierOptions || {},
         modelDefaultTiers: config.modelDefaultTiers || {},
         modelReferenceLimits: config.modelReferenceLimits || {},
-        modelVideoCapabilities: config.modelVideoCapabilities || {},
     };
 }
 
@@ -250,27 +242,24 @@ function readAuthToken(tier?: ImageKeyTier) {
 }
 
 export function readUserModelConfig() {
-    if (typeof window === "undefined") return { mode: "single" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
+    if (typeof window === "undefined") return { mode: "aggregate" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
     try {
         const parsed = JSON.parse(window.localStorage.getItem(USER_MODEL_CONFIG_KEY) || "{}") as StoredUserModelConfig;
-        const mode: UserModelConfigMode = parsed.mode === "aggregate" ? "aggregate" : "single";
-        const selectedIds = new Set(parsed.modelIds || []);
-        const sourceModels = normalizeStoredUserModels(parsed.models || []).filter((model) => !selectedIds.size || selectedIds.has(model.id));
-        const apiKeys = parsed.apiKeys || {};
-        const aggregate = normalizeAggregateConfig(parsed.aggregate);
-        const models = mode === "aggregate" ? (aggregate.apiKey ? sourceModels : []) : sourceModels.filter((model) => Boolean(apiKeys[model.id]?.trim()));
-        return { mode, models, apiKeys, aggregate };
+        const sourceModels = normalizeStoredUserModels(parsed.models || []);
+        const sharedApiKey = resolveStoredSharedApiKey(parsed);
+        const aggregate = normalizeAggregateConfig({ apiKey: sharedApiKey });
+        const apiKeys = sharedApiKey ? Object.fromEntries(sourceModels.map((model) => [model.id, sharedApiKey])) : {};
+        return { mode: "aggregate" as UserModelConfigMode, models: sharedApiKey ? sourceModels : [], apiKeys, aggregate };
     } catch {
-        return { mode: "single" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
+        return { mode: "aggregate" as UserModelConfigMode, models: [], apiKeys: {} as Record<string, string>, aggregate: {} as StoredAggregateModelConfig };
     }
 }
 
-export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.videoModel || config.parseModel || config.promptModel) {
+export function resolveModelRuntimeConfig(config: AiConfig, modelName = config.model || config.imageModel || config.parseModel || config.promptModel) {
     const userModelConfig = readUserModelConfig();
     const model = userModelConfig.models.find((item) => item.name === modelName);
     if (!model) return { baseUrl: config.baseUrl, apiKey: config.apiKey };
-    if (userModelConfig.mode === "aggregate") return { baseUrl: model.apiUrl, apiKey: userModelConfig.aggregate.apiKey || "", modelId: resolveRuntimeModelId(model, config.imageTier) };
-    return { baseUrl: model.apiUrl, apiKey: String(userModelConfig.apiKeys[model.id] || "").trim(), modelId: resolveRuntimeModelId(model, config.imageTier) };
+    return { baseUrl: model.apiUrl, apiKey: userModelConfig.aggregate.apiKey || "", modelId: resolveRuntimeModelId(model, config.imageTier) };
 }
 
 function readModelApiKey(model: string): string {
@@ -310,15 +299,17 @@ export const useConfigStore = create<ConfigStore>()(
                 if (typeof window === "undefined") return;
                 const models = normalizeStoredUserModels(await apiGet<StoredUserModel[]>("/api/models"));
                 const parsed = readStoredUserModelConfig();
-                const aggregate = normalizeAggregateConfig(parsed.aggregate);
+                const sharedApiKey = resolveStoredSharedApiKey(parsed);
+                const aggregate = normalizeAggregateConfig({ apiKey: sharedApiKey });
                 window.localStorage.setItem(
                     USER_MODEL_CONFIG_KEY,
                     JSON.stringify({
                         ...parsed,
                         version: 4,
-                        mode: parsed.mode === "aggregate" ? "aggregate" : "single",
+                        mode: "aggregate",
+                        modelIds: undefined,
                         aggregate,
-                        apiKeys: parsed.apiKeys || {},
+                        apiKeys: sharedApiKey ? Object.fromEntries(models.map((model) => [model.id, sharedApiKey])) : {},
                         models,
                         updatedAt: Date.now(),
                     }),
@@ -363,8 +354,6 @@ export const useConfigStore = create<ConfigStore>()(
                         quality: "auto",
                         size: normalizeStoredImageSize(config.size),
                         count: normalizeStoredImageCount(config.count),
-                        videoSeconds: config.videoSeconds || "6",
-                        vquality: config.vquality || "720",
                         parseModel: config.parseModel || "",
                         promptModel: config.promptModel || "",
                         modelTypes: config.modelTypes || {},
@@ -372,7 +361,6 @@ export const useConfigStore = create<ConfigStore>()(
                         modelTierOptions: config.modelTierOptions || {},
                         modelDefaultTiers: config.modelDefaultTiers || {},
                         modelReferenceLimits: config.modelReferenceLimits || {},
-                        modelVideoCapabilities: config.modelVideoCapabilities || {},
                     },
                 };
             },
@@ -403,31 +391,31 @@ function resolveRuntimeModelId(model: StoredUserModel, imageTier: string) {
     return (model.tierModels?.[tier] || model.tierModels?.["1k"] || model.tierModels?.["512"] || model.tierModels?.["2k"] || model.tierModels?.["4k"] || model.modelId || model.name).trim();
 }
 
-function normalizeModelSize(size: string, supportedSizes: string[] | undefined) {
+function normalizeModelSize(size: string, supportedSizes: readonly string[] | undefined) {
     const allowed = supportedSizes?.length ? supportedSizes : DEFAULT_IMAGE_ASPECT_VALUES;
     return allowed.includes(size) ? size : allowed[0] || "auto";
 }
 
-export function supportedImageSizes(config: AiConfig, modelName = config.model || config.imageModel) {
+export function supportedImageSizes(config: AiConfig, modelName = config.model || config.imageModel): readonly string[] {
     return config.modelSupportedSizes[modelName] || [...DEFAULT_IMAGE_ASPECT_VALUES];
 }
 
-export function supportedImageTiers(config: AiConfig, modelName = config.model || config.imageModel) {
+export function supportedImageTiers(config: AiConfig, modelName = config.model || config.imageModel): readonly string[] {
     const tiers = config.modelTierOptions[modelName] || [];
     return tiers.length ? tiers : [...IMAGE_MODEL_TIERS];
 }
 
-export function normalizeImageSizeForModel(config: AiConfig, modelName: string, size: string) {
+export function normalizeImageSizeForModel(config: AiConfig, modelName: string, size: string): string {
     return normalizeModelSize(size, supportedImageSizes(config, modelName));
 }
 
-export function normalizeImageTierForModel(config: AiConfig, modelName: string, tier: string) {
+export function normalizeImageTierForModel(config: AiConfig, modelName: string, tier: string): ImageKeyTier {
     const tiers = supportedImageTiers(config, modelName);
-    return tiers.includes(tier) ? tier : defaultImageTierForModel(config, modelName);
+    return (tiers.includes(tier) ? tier : defaultImageTierForModel(config, modelName)) as ImageKeyTier;
 }
 
-export function defaultImageTierForModel(config: AiConfig, modelName: string) {
-    return normalizeDefaultModelTier(config.modelDefaultTiers[modelName], supportedImageTiers(config, modelName));
+export function defaultImageTierForModel(config: AiConfig, modelName: string): ImageKeyTier {
+    return normalizeDefaultModelTier(config.modelDefaultTiers[modelName], supportedImageTiers(config, modelName)) as ImageKeyTier;
 }
 
 export function imageReferenceLimit(config: AiConfig, modelName = config.model || config.imageModel) {
@@ -459,8 +447,12 @@ function readStoredUserModelConfig() {
     }
 }
 
-export function videoCapabilitiesForModel(config: AiConfig, modelName = config.videoModel || config.model) {
-    return normalizeVideoCapabilities(config.modelVideoCapabilities?.[modelName]);
+function resolveStoredSharedApiKey(config: StoredUserModelConfig) {
+    const aggregateKey = String(config.aggregate?.apiKey || "").trim();
+    if (aggregateKey) return aggregateKey;
+    return Object.values(config.apiKeys || {})
+        .map((value) => String(value || "").trim())
+        .find(Boolean) || "";
 }
 
 function normalizeReferenceLimit(value: number | undefined) {

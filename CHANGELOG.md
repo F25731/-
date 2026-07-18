@@ -2,6 +2,27 @@
 
 ## Unreleased
 
++ [Refactor] Canvas Agent now uses a native server-side function tool loop with Redis Run coordination, same-turn tool results, missing-tool repair, and structured runtime logs.
++ [Layout] Independent tasks use vertical lanes; references, prompts, configs, and results flow left-to-right, with result grids capped at two columns and image ratios preserved.
+
++ [新增] 画布 Agent 支持 SSE 运行日志、停止当前 turn、会话摘要记忆，并扩展审批工具到批量文本、移动节点、缩放节点、更新选区和调整视口。
++ [调整] 右侧画布助手改为纯画布 Agent，移除助手内生图模式、模型选择、图片设置和生成图插入；Phase 6 暂不开放 Remote MCP Server。
++ [调整] 移除视频/音频生成相关能力：删除 `/video` 工作台、视频模型配置、后端视频代理、画布 Video 节点、视频设置面板和本地媒体存储；画布导入/导出与素材库收窄为文本/图片。
+
++ [新增] Agent/MCP 改造 Phase 6 改为内置 Canvas Agent Runtime，右侧 Agent 模式会调用已配置模型生成受控画布工具请求，并继续通过审批卡和 Operation 层执行。
+
++ [新增] Agent/MCP 改造 Phase 5 新增内置 Agent MVP，右侧画布助手在开关开启后支持 Agent 模式、工具审批卡，并通过 Phase 4 Operation 层执行安全画布写操作。
++ [修复] 补齐前端配置、视频、聚合模型和画布节点生成相关类型收窄，Phase 5 开关开启时 `tsc` 与生产构建可通过。
+
++ [新增] Agent/MCP 改造 Phase 4 新增画布 schema v4、`canvasRevision`、多标签页写锁和可校验 Canvas Operation 层，为后续 Agent/MCP 写画布提供版本冲突与撤销基础。
+
++ [新增] Agent/MCP 改造 Phase 3 强化参考图上传与图片传输，新增前端 MIME/大小/像素校验、图床上传并发与 hash 去重、代理路由和 Worker 参考图下载 SSRF/重定向/大小/MIME 限制。
+
++ [新增] Agent/MCP 改造 Phase 2 新增统一 SSE 事件流，图片任务支持 `job.queued/started/succeeded/failed/canceled` 事件，前端可在开关开启后优先订阅事件并自动降级轮询。
+
++ [新增] 图片任务新增可选 Redis Streams 队列执行链路，支持固定 Worker Pool、加密队列载荷、并发限制、幂等键、取消和 pending 接管。
++ [新增] 建立生产级 Agent/MCP 改造 Phase 0 基线，新增默认关闭的队列、SSE、内置 Agent 和远程 MCP 开关及 Job/Agent 错误码契约。
+
 ## v0.1.0 - 2026-05-26
 
 + [优化] 优化我的画布、我的素材导出功能

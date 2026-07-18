@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -32,6 +33,7 @@ const (
 	ImageJobRunning   ImageJobStatus = "running"
 	ImageJobSucceeded ImageJobStatus = "succeeded"
 	ImageJobFailed    ImageJobStatus = "failed"
+	ImageJobCanceled  ImageJobStatus = "canceled"
 )
 
 type ImageJob struct {
@@ -73,6 +75,12 @@ var (
 	}
 	imageJobDownloadClient = &http.Client{
 		Timeout: 60 * time.Second,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("too many reference image redirects")
+			}
+			return validateImageJobReferenceURL(request.URL.String())
+		},
 		Transport: &http.Transport{
 			MaxIdleConns:        512,
 			MaxIdleConnsPerHost: 128,
@@ -80,7 +88,8 @@ var (
 		},
 	}
 	imageJobModeCache              sync.Map
-	imageJobReferenceDownloadSlots = make(chan struct{}, 512)
+	imageJobReferenceDownloadSlots chan struct{}
+	imageJobReferenceDownloadOnce  sync.Once
 	imageJobWorkerID               = randomImageJobID()
 	imageJobWorkerOnce             sync.Once
 )
@@ -110,16 +119,20 @@ type imageJobStoredResult struct {
 func CreateImageJob(request *http.Request, kind string, body []byte) (ImageJob, error) {
 	targetPath := imageJobTargetPath(kind)
 	if targetPath == "" {
-		return ImageJob{}, safeMessageError{message: "unsupported image job type"}
+		return ImageJob{}, newSafeMessageError(ErrorCodeJobUnsupportedType, "unsupported image job type")
 	}
 	token := bearerToken(request)
 	if token == "" {
-		return ImageJob{}, safeMessageError{message: "Missing pool API key"}
+		return ImageJob{}, newSafeMessageError(ErrorCodeJobMissingAPIKey, "Missing pool API key")
+	}
+	if config.Cfg.EnableImageQueueV2 {
+		return createQueuedImageJob(request, kind, targetPath, token, body)
 	}
 	job := newImageJob()
 	if err := saveImageJob(job); err != nil {
 		return ImageJob{}, err
 	}
+	publishImageJobEvent(EventTypeJobQueued, job)
 	jobRequest := imageJobRequest{
 		Path:        targetPath,
 		Token:       token,
@@ -134,7 +147,7 @@ func CreateImageJob(request *http.Request, kind string, body []byte) (ImageJob, 
 
 func GetImageJob(id string) (ImageJob, bool, error) {
 	job, ok, err := loadImageJob(id)
-	if err != nil || !ok || (job.Status != ImageJobPending && job.Status != ImageJobRunning) || job.WorkerID == imageJobWorkerID {
+	if err != nil || !ok || !shouldCheckImageJobWorker(job) {
 		return job, ok, err
 	}
 	alive, err := imageJobWorkerAlive(job.WorkerID)
@@ -147,7 +160,12 @@ func GetImageJob(id string) (ImageJob, bool, error) {
 	if err := saveImageJob(job); err != nil {
 		return ImageJob{}, false, err
 	}
+	publishImageJobEvent(EventTypeJobFailed, job)
 	return job, true, nil
+}
+
+func shouldCheckImageJobWorker(job ImageJob) bool {
+	return (job.Status == ImageJobPending || job.Status == ImageJobRunning) && job.WorkerID != "" && job.WorkerID != imageJobWorkerID
 }
 
 func StartImageJobWorker() {
@@ -160,6 +178,9 @@ func StartImageJobWorker() {
 				writeImageJobWorkerHeartbeat()
 			}
 		}()
+		if config.Cfg.EnableImageQueueV2 {
+			startImageJobQueueWorkers()
+		}
 	})
 }
 
@@ -189,11 +210,19 @@ func imageJobWorkerAlive(workerID string) (bool, error) {
 }
 
 func runImageJob(id string, jobRequest imageJobRequest) {
+	runImageJobWithContext(backgroundContext(), id, jobRequest)
+}
+
+func runImageJobWithContext(ctx context.Context, id string, jobRequest imageJobRequest) {
 	_ = updateImageJob(id, func(job *ImageJob) {
 		job.Status = ImageJobRunning
+		job.WorkerID = imageJobWorkerID
 	})
-	payload, err := forwardPoolImageRequest(jobRequest)
+	payload, err := forwardPoolImageRequest(ctx, jobRequest)
 	if err != nil {
+		if ctx.Err() != nil && imageJobCanceled(id) {
+			return
+		}
 		_ = updateImageJob(id, func(job *ImageJob) {
 			job.Status = ImageJobFailed
 			job.Error = err.Error()
@@ -205,10 +234,16 @@ func runImageJob(id string, jobRequest imageJobRequest) {
 		err = saveImageJobResults(id, results)
 	}
 	if err != nil {
+		if ctx.Err() != nil && imageJobCanceled(id) {
+			return
+		}
 		_ = updateImageJob(id, func(job *ImageJob) {
 			job.Status = ImageJobFailed
 			job.Error = err.Error()
 		})
+		return
+	}
+	if imageJobCanceled(id) {
 		return
 	}
 	_ = updateImageJob(id, func(job *ImageJob) {
@@ -232,7 +267,7 @@ func GetImageJobResult(id string, index int) ([]byte, string, bool, error) {
 	}
 	contentType, data, ok := unpackImageJobResult(payload)
 	if !ok {
-		return nil, "", false, safeMessageError{message: "invalid image job result"}
+		return nil, "", false, newSafeMessageError(ErrorCodeJobResultInvalid, "invalid image job result")
 	}
 	return data, contentType, true, nil
 }
@@ -266,7 +301,7 @@ func compactImageJobPayload(id string, payload any) (any, []imageJobStoredResult
 
 		data, contentType, err := decodeImageJobBase64(encoded)
 		if err != nil {
-			return nil, nil, safeMessageError{message: "invalid base64 image result"}
+			return nil, nil, newSafeMessageError(ErrorCodeJobInvalidBase64Result, "invalid base64 image result")
 		}
 		results = append(results, imageJobStoredResult{Index: index, ContentType: contentType, Data: data})
 		item["url"] = fmt.Sprintf("/api/image-jobs/result/%s/%d", id, index)
@@ -333,19 +368,19 @@ func unpackImageJobResult(payload []byte) (string, []byte, bool) {
 	return contentType, payload[index+1:], true
 }
 
-func forwardPoolImageRequest(jobRequest imageJobRequest) (any, error) {
+func forwardPoolImageRequest(ctx context.Context, jobRequest imageJobRequest) (any, error) {
 	if jobRequest.JSON == nil || len(jobRequest.Images) == 0 || jobRequest.Path != "/images/edits" {
-		return doPoolImageRequest(jobRequest.Path, jobRequest.Token, normalizedContentType(jobRequest.ContentType, jobRequest.JSON != nil), bytes.NewReader(jobRequest.Body), jobRequest.BaseURL)
+		return doPoolImageRequest(ctx, jobRequest.Path, jobRequest.Token, normalizedContentType(jobRequest.ContentType, jobRequest.JSON != nil), bytes.NewReader(jobRequest.Body), jobRequest.BaseURL)
 	}
 
 	cacheKey := imageJobModeCacheKey(jobRequest)
 	if mode, ok := imageJobCachedMode(cacheKey); ok && mode == imageJobRequestModeMultipart {
-		payload, err := doMultipartPoolImageRequest(jobRequest)
+		payload, err := doMultipartPoolImageRequest(ctx, jobRequest)
 		if err == nil {
 			return payload, nil
 		}
 		if shouldRetryImageJobWithJSON(err.Error()) {
-			payload, jsonErr := doJSONPoolImageRequest(jobRequest)
+			payload, jsonErr := doJSONPoolImageRequest(ctx, jobRequest)
 			if jsonErr == nil {
 				storeImageJobCachedMode(cacheKey, imageJobRequestModeJSON)
 				return payload, nil
@@ -355,7 +390,7 @@ func forwardPoolImageRequest(jobRequest imageJobRequest) (any, error) {
 		return nil, err
 	}
 
-	payload, err := doJSONPoolImageRequest(jobRequest)
+	payload, err := doJSONPoolImageRequest(ctx, jobRequest)
 	if err == nil {
 		storeImageJobCachedMode(cacheKey, imageJobRequestModeJSON)
 		return payload, nil
@@ -364,7 +399,7 @@ func forwardPoolImageRequest(jobRequest imageJobRequest) (any, error) {
 		return nil, err
 	}
 	log.Printf("pool image request retrying as multipart: path=%s model=%s error=%s", jobRequest.Path, jobRequest.Model, err.Error())
-	payload, multipartErr := doMultipartPoolImageRequest(jobRequest)
+	payload, multipartErr := doMultipartPoolImageRequest(ctx, jobRequest)
 	if multipartErr == nil {
 		storeImageJobCachedMode(cacheKey, imageJobRequestModeMultipart)
 		return payload, nil
@@ -372,15 +407,15 @@ func forwardPoolImageRequest(jobRequest imageJobRequest) (any, error) {
 	return nil, multipartErr
 }
 
-func doJSONPoolImageRequest(jobRequest imageJobRequest) (any, error) {
-	return doPoolImageRequest(jobRequest.Path, jobRequest.Token, "application/json", bytes.NewReader(jobRequest.Body), jobRequest.BaseURL)
+func doJSONPoolImageRequest(ctx context.Context, jobRequest imageJobRequest) (any, error) {
+	return doPoolImageRequest(ctx, jobRequest.Path, jobRequest.Token, "application/json", bytes.NewReader(jobRequest.Body), jobRequest.BaseURL)
 }
 
-func doMultipartPoolImageRequest(jobRequest imageJobRequest) (any, error) {
+func doMultipartPoolImageRequest(ctx context.Context, jobRequest imageJobRequest) (any, error) {
 	reader, writer := io.Pipe()
 	multipartWriter := multipart.NewWriter(writer)
 	go func() {
-		if err := writeImageJobMultipart(multipartWriter, jobRequest); err != nil {
+		if err := writeImageJobMultipart(ctx, multipartWriter, jobRequest); err != nil {
 			_ = writer.CloseWithError(err)
 			return
 		}
@@ -390,12 +425,12 @@ func doMultipartPoolImageRequest(jobRequest imageJobRequest) (any, error) {
 		}
 		_ = writer.Close()
 	}()
-	return doPoolImageRequest(jobRequest.Path, jobRequest.Token, multipartWriter.FormDataContentType(), reader, jobRequest.BaseURL)
+	return doPoolImageRequest(ctx, jobRequest.Path, jobRequest.Token, multipartWriter.FormDataContentType(), reader, jobRequest.BaseURL)
 }
 
-func doPoolImageRequest(targetPath string, token string, contentType string, body io.Reader, baseURL string) (any, error) {
+func doPoolImageRequest(ctx context.Context, targetPath string, token string, contentType string, body io.Reader, baseURL string) (any, error) {
 	target := imageJobAPIURL(baseURL, targetPath)
-	request, err := http.NewRequest(http.MethodPost, target, body)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +457,7 @@ func doPoolImageRequest(targetPath string, token string, contentType string, bod
 	return payload, nil
 }
 
-func writeImageJobMultipart(writer *multipart.Writer, jobRequest imageJobRequest) error {
+func writeImageJobMultipart(ctx context.Context, writer *multipart.Writer, jobRequest imageJobRequest) error {
 	for key, value := range jobRequest.JSON {
 		if isImageReferenceField(key) {
 			continue
@@ -436,33 +471,43 @@ func writeImageJobMultipart(writer *multipart.Writer, jobRequest imageJobRequest
 		}
 	}
 	for index, imageURL := range jobRequest.Images {
-		if err := writeImageJobMultipartImage(writer, imageURL, index); err != nil {
+		if err := writeImageJobMultipartImage(ctx, writer, imageURL, index); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeImageJobMultipartImage(writer *multipart.Writer, imageURL string, index int) error {
-	imageJobReferenceDownloadSlots <- struct{}{}
-	defer func() { <-imageJobReferenceDownloadSlots }()
+func writeImageJobMultipartImage(ctx context.Context, writer *multipart.Writer, imageURL string, index int) error {
+	if err := validateImageJobReferenceURL(imageURL); err != nil {
+		return newSafeMessageError(ErrorCodeJobReferenceURLInaccessible, "reference image url is not accessible")
+	}
+	release, err := acquireImageJobReferenceDownloadSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 
-	request, err := http.NewRequestWithContext(backgroundContext(), http.MethodGet, imageURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
 		return err
 	}
 	response, err := imageJobDownloadClient.Do(request)
 	if err != nil {
-		return safeMessageError{message: "reference image download failed"}
+		return newSafeMessageError(ErrorCodeJobReferenceDownloadFailed, "reference image download failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= http.StatusBadRequest {
-		return safeMessageError{message: "reference image url is not accessible"}
+		return newSafeMessageError(ErrorCodeJobReferenceURLInaccessible, "reference image url is not accessible")
 	}
 	if response.ContentLength > maxReferenceImageBytes {
-		return safeMessageError{message: "reference image is too large"}
+		return newSafeMessageError(ErrorCodeJobReferenceTooLarge, "reference image is too large")
 	}
-	part, err := writer.CreateFormFile("image", imageJobFileName(imageURL, response.Header.Get("Content-Type"), index))
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
+		return newSafeMessageError(ErrorCodeJobReferenceURLInaccessible, "reference image url is not accessible")
+	}
+	part, err := writer.CreateFormFile("image", imageJobFileName(imageURL, contentType, index))
 	if err != nil {
 		return err
 	}
@@ -471,9 +516,25 @@ func writeImageJobMultipartImage(writer *multipart.Writer, imageURL string, inde
 		return err
 	}
 	if written > maxReferenceImageBytes {
-		return safeMessageError{message: "reference image is too large"}
+		return newSafeMessageError(ErrorCodeJobReferenceTooLarge, "reference image is too large")
 	}
 	return nil
+}
+
+func acquireImageJobReferenceDownloadSlot(ctx context.Context) (func(), error) {
+	imageJobReferenceDownloadOnce.Do(func() {
+		size := config.Cfg.ReferenceDownloadConcurrency
+		if size <= 0 {
+			size = 16
+		}
+		imageJobReferenceDownloadSlots = make(chan struct{}, size)
+	})
+	select {
+	case imageJobReferenceDownloadSlots <- struct{}{}:
+		return func() { <-imageJobReferenceDownloadSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func parseImageJobJSONRequest(body []byte) (map[string]any, string, []string) {
@@ -659,6 +720,48 @@ func isHTTPURL(value string) bool {
 	return strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://")
 }
 
+func validateImageJobReferenceURL(value string) error {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("unsupported reference image scheme")
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errors.New("missing reference image host")
+	}
+	if isBlockedReferenceHost(host) {
+		return errors.New("blocked reference image host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return err
+	}
+	if len(ips) == 0 {
+		return errors.New("reference image host has no address")
+	}
+	for _, ip := range ips {
+		if isBlockedReferenceIP(ip) {
+			return errors.New("blocked reference image address")
+		}
+	}
+	return nil
+}
+
+func isBlockedReferenceHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), ".")
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+func isBlockedReferenceIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+}
+
 func imageJobBaseURL(request *http.Request) string {
 	value := strings.TrimSpace(request.Header.Get("x-image-api-base-url"))
 	if value == "" {
@@ -727,9 +830,18 @@ func updateImageJob(id string, mutate func(*ImageJob)) error {
 	if err != nil || !ok {
 		return err
 	}
+	previousStatus := job.Status
 	mutate(&job)
 	job.UpdatedAt = time.Now().UnixMilli()
-	return saveImageJob(job)
+	if err := saveImageJob(job); err != nil {
+		return err
+	}
+	if job.Status != previousStatus {
+		if eventType := imageJobEventType(job.Status); eventType != "" {
+			publishImageJobEvent(eventType, job)
+		}
+	}
+	return nil
 }
 
 func imageJobKey(id string) string {

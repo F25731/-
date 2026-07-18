@@ -1,6 +1,5 @@
 import { apiDelete, apiGet, apiPost, compactApiParams } from "@/services/api/request";
 import type { Prompt, PromptListResponse } from "@/services/api/prompts";
-import type { VideoModelCapabilities } from "@/constant/video-model-options";
 
 export type AdminPromptCategory = {
     category: string;
@@ -104,7 +103,7 @@ export type AdminPromptQuery = {
 export type AdminAsset = {
     id: string;
     title: string;
-    type: "text" | "image" | "video";
+    type: "text" | "image";
     coverUrl: string;
     tags: string[];
     category: string;
@@ -173,7 +172,6 @@ export type AdminPublicModelChannelSettings = {
     modelCosts: AdminModelCost[];
     defaultModel: string;
     defaultImageModel: string;
-    defaultVideoModel: string;
     defaultTextModel: string;
     systemPrompt: string;
     allowCustomChannel: boolean;
@@ -250,7 +248,7 @@ export type AdminModel = {
     id: string;
     name: string;
     modelId: string;
-    type: "image" | "video" | "parse" | "prompt" | "detail_prompt";
+    type: "image" | "parse" | "prompt" | "detail_prompt";
     apiUrl: string;
     apiKey?: string;
     hasApiKey?: boolean;
@@ -258,7 +256,6 @@ export type AdminModel = {
     defaultTier?: string;
     supportedSizes?: string[];
     referenceLimit?: number;
-    videoCapabilities?: VideoModelCapabilities;
     isDefault?: boolean;
     enabled: boolean;
     remark: string;

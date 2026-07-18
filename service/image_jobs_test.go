@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 )
@@ -89,5 +90,31 @@ func TestNewImageJobTracksWorker(t *testing.T) {
 	job := newImageJob()
 	if job.WorkerID == "" || job.WorkerID != imageJobWorkerID {
 		t.Fatalf("worker ID = %q", job.WorkerID)
+	}
+}
+
+func TestQueuedPendingImageJobDoesNotRequireWorkerHeartbeat(t *testing.T) {
+	job := ImageJob{Status: ImageJobPending}
+	if shouldCheckImageJobWorker(job) {
+		t.Fatal("queued pending job without an assigned worker must remain pending")
+	}
+	job.WorkerID = "another-worker"
+	if !shouldCheckImageJobWorker(job) {
+		t.Fatal("assigned remote worker should require a heartbeat check")
+	}
+}
+
+func TestReferenceURLSafetyBlocksLocalTargets(t *testing.T) {
+	if err := validateImageJobReferenceURL("http://127.0.0.1/image.png"); err == nil {
+		t.Fatal("localhost IP should be blocked")
+	}
+	if err := validateImageJobReferenceURL("http://localhost/image.png"); err == nil {
+		t.Fatal("localhost hostname should be blocked")
+	}
+	if !isBlockedReferenceIP(net.ParseIP("10.1.2.3")) {
+		t.Fatal("private IP should be blocked")
+	}
+	if isBlockedReferenceIP(net.ParseIP("8.8.8.8")) {
+		t.Fatal("public IP should be allowed")
 	}
 }

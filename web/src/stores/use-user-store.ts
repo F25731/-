@@ -62,9 +62,6 @@ function createStoredPoolUser(existingUser: AuthUser | null, balanceStatus: Bala
     return {
         ...baseUser,
         id: tier,
-        credits: 0,
-        quota: 0,
-        used: 0,
         ...usageToUserBalance(usage),
         balanceStatus: usage ? "available" : balanceStatus,
         balanceTier: tier,
@@ -102,7 +99,16 @@ export const useUserStore = create<UserStore>()(
                 const normalizedKeys = authMode === "pool" ? normalizeImageApiKeys({ ...apiKeys, "1k": apiKeys["1k"] || token }) : {};
                 ensureSelectedTier(normalizedKeys);
                 syncConfigApiKey(normalizedKeys, authMode === "pool" ? token : "");
-                set({ token, apiKeys: normalizedKeys, apiKeyUsages: authMode === "pool" ? apiKeyUsages : {}, apiKeyUsagesRefreshedAt: Object.keys(apiKeyUsages).length ? Date.now() : 0, user, authMode, balanceStatus: user.balanceStatus || "unknown", isReady: true });
+                set({
+                    token,
+                    apiKeys: normalizedKeys,
+                    apiKeyUsages: authMode === "pool" ? apiKeyUsages : {},
+                    apiKeyUsagesRefreshedAt: Object.keys(apiKeyUsages).length ? Date.now() : 0,
+                    user,
+                    authMode,
+                    balanceStatus: user.balanceStatus || "unknown",
+                    isReady: true,
+                });
             },
             clearSession: () => {
                 useConfigStore.getState().updateConfig("apiKey", "");
@@ -178,7 +184,17 @@ export const useUserStore = create<UserStore>()(
                     const apiKeyUsages = session.apiKeyUsages || {};
                     ensureSelectedTier(apiKeys);
                     syncConfigApiKey(apiKeys, session.token);
-                    set({ token: session.token, apiKeys, apiKeyUsages, apiKeyUsagesRefreshedAt: Object.keys(apiKeyUsages).length ? Date.now() : 0, authMode: "pool", user: session.user, balanceStatus: session.user.balanceStatus || "unknown", isReady: true, isLoading: false });
+                    set({
+                        token: session.token,
+                        apiKeys,
+                        apiKeyUsages,
+                        apiKeyUsagesRefreshedAt: Object.keys(apiKeyUsages).length ? Date.now() : 0,
+                        authMode: "pool",
+                        user: session.user,
+                        balanceStatus: session.user.balanceStatus || "unknown",
+                        isReady: true,
+                        isLoading: false,
+                    });
                     return session.user;
                 } catch (error) {
                     set({ isLoading: false });

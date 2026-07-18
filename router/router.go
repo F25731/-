@@ -26,11 +26,15 @@ func New() *gin.Engine {
 	api.POST("/balance", gin.WrapF(handler.Balance))
 	api.POST("/prompt/extract", gin.WrapF(handler.PromptExtract))
 	api.POST("/detail-llm", gin.WrapF(handler.DetailLLM))
+	api.GET("/events", gin.WrapF(handler.Events))
 	api.POST("/image-jobs/:kind", func(c *gin.Context) {
 		handler.ImageJobCreate(c.Writer, c.Request, c.Param("kind"))
 	})
 	api.GET("/image-jobs/status/:id", func(c *gin.Context) {
 		handler.ImageJobStatus(c.Writer, c.Request, c.Param("id"))
+	})
+	api.POST("/image-jobs/cancel/:id", func(c *gin.Context) {
+		handler.ImageJobCancel(c.Writer, c.Request, c.Param("id"))
 	})
 	api.GET("/image-jobs/result/:id/:index", func(c *gin.Context) {
 		handler.ImageJobResult(c.Writer, c.Request, c.Param("id"), c.Param("index"))
@@ -39,13 +43,6 @@ func New() *gin.Engine {
 	v1.POST("/images/generations", gin.WrapF(handler.AIImagesGenerations))
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))
 	v1.POST("/chat/completions", gin.WrapF(handler.AIChatCompletions))
-	v1.POST("/videos", gin.WrapF(handler.AIVideos))
-	v1.GET("/videos/:id", func(c *gin.Context) {
-		handler.AIVideo(c.Writer, c.Request, c.Param("id"))
-	})
-	v1.GET("/videos/:id/content", func(c *gin.Context) {
-		handler.AIVideoContent(c.Writer, c.Request, c.Param("id"))
-	})
 	api.GET("/prompts", middleware.OptionalAuth, gin.WrapF(handler.Prompts))
 	api.GET("/assets", middleware.OptionalAuth, gin.WrapF(handler.Assets))
 	api.POST("/admin/login", gin.WrapF(handler.AdminLogin))

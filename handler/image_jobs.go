@@ -36,6 +36,20 @@ func ImageJobStatus(w http.ResponseWriter, _ *http.Request, id string) {
 	OK(w, job)
 }
 
+func ImageJobCancel(w http.ResponseWriter, _ *http.Request, id string) {
+	w.Header().Set("Cache-Control", "no-store")
+	job, ok, err := service.CancelImageJob(id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	if !ok {
+		http.Error(w, "image job not found or expired", http.StatusNotFound)
+		return
+	}
+	OK(w, job)
+}
+
 func ImageJobResult(w http.ResponseWriter, _ *http.Request, id string, indexValue string) {
 	index, err := strconv.Atoi(indexValue)
 	if err != nil || index < 0 {

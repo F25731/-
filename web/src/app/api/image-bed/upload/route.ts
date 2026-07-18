@@ -21,6 +21,7 @@ type InternalImageBedSettingsResponse = {
 };
 
 const DEFAULT_IMAGE_BED_UPLOAD_URL = "https://tc.zmoapi.cn/api/upload";
+const MAX_REFERENCE_IMAGE_BYTES = 40 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
     const { uploadUrl, apiKey } = await resolveImageBedConfig();
@@ -32,6 +33,13 @@ export async function POST(request: NextRequest) {
     const file = input.get("file");
     if (!(file instanceof File)) {
         return NextResponse.json({ code: 1, data: null, msg: "请上传图片文件" }, { status: 400 });
+    }
+
+    if (!file.type.startsWith("image/")) {
+        return NextResponse.json({ code: 1, data: null, msg: "Uploaded file is not an image" }, { status: 415 });
+    }
+    if (file.size > MAX_REFERENCE_IMAGE_BYTES) {
+        return NextResponse.json({ code: 1, data: null, msg: "Reference image is too large" }, { status: 413 });
     }
 
     const formData = new FormData();

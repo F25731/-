@@ -13,16 +13,16 @@ export enum CanvasNodeType {
     Image = "image",
     Text = "text",
     Config = "config",
-    Video = "video",
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
-export type CanvasGenerationMode = "text" | "image" | "video";
+export type CanvasGenerationMode = "text" | "image";
 export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeMetadata = {
     content?: string;
     prompt?: string;
+    composerContent?: string;
     originalPrompt?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
@@ -34,8 +34,6 @@ export type CanvasNodeMetadata = {
     quality?: string;
     imageTier?: string;
     count?: number;
-    seconds?: string;
-    vquality?: string;
     references?: string[];
     naturalWidth?: number;
     naturalHeight?: number;
@@ -53,6 +51,17 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     imageJobId?: string;
     resumeOnReload?: boolean;
+    detailWorkflowId?: string;
+    detailRole?: "plan" | "screen-prompt" | "screen-config" | "screen-result" | "long-image" | "reference";
+    detailScreenIndex?: number;
+    detailScreenCount?: number;
+    detailStyleSummary?: string;
+    detailGoal?: string;
+    detailGenerationMode?: "precise" | "rough";
+    detailExecutionMode?: "step" | "continuous";
+    detailReferenceNodeIds?: string[];
+    detailPromptNodeId?: string;
+    detailAttempt?: number;
 };
 
 export type CanvasNodeData = {
@@ -81,27 +90,136 @@ export type CanvasAssistantReference = {
     text?: string;
 };
 
-export type CanvasAssistantImage = {
+export type CanvasAgentToolRequest = {
     id: string;
-    dataUrl: string;
+    runId?: string;
+    turnId?: string;
+    toolCallId?: string;
+    name:
+        | "canvas.applyOps"
+        | "canvas.generateImage"
+        | "canvas.generateText"
+        | "canvas.detailWorkflow"
+        | "canvas.retryFailedImages"
+        | "canvas.runGeneration"
+        | "canvas.addNode"
+        | "canvas.createTextNodes"
+        | "canvas.updateNode"
+        | "canvas.moveNodes"
+        | "canvas.resizeNode"
+        | "canvas.removeNodes"
+        | "canvas.addConnection"
+        | "canvas.removeConnections"
+        | "canvas.selectNodes"
+        | "canvas.setViewport"
+        | "canvas.replaceDocument";
+    description: string;
+    expectedRevision: number;
+    operation: unknown;
+    status: "pending" | "approved" | "applying" | "applied" | "submitted" | "running" | "rejected" | "completed" | "failed";
+    result?: string;
+    error?: string;
+    generationRunIds?: string[];
+    imageJobIds?: string[];
+    artifacts?: CanvasAgentArtifact[];
+};
+
+export type CanvasAgentArtifact = {
+    id: string;
+    type: "image";
+    title: string;
+    url: string;
     storageKey?: string;
-    prompt: string;
+    nodeId?: string;
+};
+
+export type CanvasAgentEventType =
+    | "run.started"
+    | "turn.started"
+    | "turn.activity"
+    | "reasoning.delta"
+    | "assistant.delta"
+    | "model.response"
+    | "tool.requested"
+    | "tool.validation_failed"
+    | "tool.result"
+    | "tool.approved"
+    | "canvas.applied"
+    | "generation.started"
+    | "image-job.submitted"
+    | "image-job.running"
+    | "image-job.completed"
+    | "image-job.failed"
+    | "generation.completed"
+    | "generation.failed"
+    | "detail.workflow.created"
+    | "detail.screen.started"
+    | "detail.screen.completed"
+    | "detail.screen.failed"
+    | "detail.workflow.completed"
+    | "detail.long-image.completed"
+    | "tool.completed"
+    | "tool.failed"
+    | "turn.completed"
+    | "run.completed"
+    | "run.stopped"
+    | "error";
+
+export type CanvasAgentEvent = {
+    id: string;
+    type: CanvasAgentEventType;
+    runId: string;
+    turnId?: string;
+    toolCallId?: string;
+    generationRunId?: string;
+    imageJobId?: string;
+    nodeId?: string;
+    targetNodeId?: string;
+    text: string;
+    status?: "pending" | "running" | "submitted" | "completed" | "failed" | "stopped";
+    timestamp: number;
+    sequence: number;
+};
+
+export type CanvasAgentApplyResult = {
+    ok: boolean;
+    message: string;
+    generationRunIds?: string[];
+    imageJobIds?: string[];
+    artifacts?: CanvasAgentArtifact[];
+    nextCanvas?: {
+        nodes: CanvasNodeData[];
+        connections: CanvasConnection[];
+        selectedNodeIds: string[];
+        viewport: ViewportTransform;
+    };
 };
 
 export type CanvasAssistantMessage = {
     id: string;
+    runId?: string;
+    turnId?: string;
     role: "user" | "assistant";
-    mode: "ask" | "image";
+    mode: "agent";
+    agentMode?: "general" | "detail";
     text: string;
     isLoading?: boolean;
     startedAt?: number;
     references?: CanvasAssistantReference[];
-    images?: CanvasAssistantImage[];
+    toolRequest?: CanvasAgentToolRequest;
+    toolRequests?: CanvasAgentToolRequest[];
+    toolName?: CanvasAgentToolRequest["name"];
+    toolStatus?: CanvasAgentToolRequest["status"];
+    toolResult?: string;
+    logs?: string[];
+    activityText?: string;
+    events?: CanvasAgentEvent[];
 };
 
 export type CanvasAssistantSession = {
     id: string;
     title: string;
+    summary?: string;
     messages: CanvasAssistantMessage[];
     createdAt: string;
     updatedAt: string;

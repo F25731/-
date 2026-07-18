@@ -9,9 +9,8 @@
 - 画布项目 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:canvas_store`。
 - 我的素材 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:asset_store`。
 - 图片 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `image_files`。
-- 视频等媒体 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `media_files`。
 
-画布 JSON 不直接长期保存大体积 base64 图片或视频。图片节点、视频节点、助手图片和素材媒体只保存展示 URL、`storageKey` 和元信息，真实 Blob 通过 `storageKey` 读取。
+画布 JSON 不直接长期保存大体积 base64 图片。图片节点、助手图片和素材图片只保存展示 URL、`storageKey` 和元信息，真实 Blob 通过 `storageKey` 读取。
 
 ## 画布项目结构
 
@@ -51,7 +50,7 @@ type CanvasProject = {
 ```ts
 type CanvasNodeData = {
   id: string;
-  type: "image" | "text" | "config" | "video";
+  type: "image" | "text" | "config";
   title: string;
   position: { x: number; y: number };
   width: number;
@@ -63,7 +62,7 @@ type CanvasNodeData = {
 通用字段：
 
 - `id`：节点 ID。
-- `type`：节点类型，当前有图片、文本、生成配置、视频四类。
+- `type`：节点类型，当前有图片、文本、生成配置三类。
 - `title`：节点标题。
 - `position`：画布世界坐标，不是屏幕坐标。
 - `width` / `height`：画布世界坐标下的节点尺寸。
@@ -78,7 +77,7 @@ type CanvasNodeMetadata = {
   status?: "idle" | "success" | "loading" | "error";
   errorDetails?: string;
   fontSize?: number;
-  generationMode?: "text" | "image" | "video";
+  generationMode?: "text" | "image";
   model?: string;
   size?: string;
   count?: number;
@@ -102,9 +101,8 @@ type CanvasNodeMetadata = {
 不同节点的使用方式：
 
 - 图片节点：`content` 是当前可展示的图片 URL，通常是 `blob:` URL；`storageKey` 指向本地图片 Blob；`naturalWidth/naturalHeight/bytes/mimeType` 保存原图信息；生成期间用 `imageJobId/resumeOnReload` 保存可恢复任务，刷新后继续轮询原任务而不重复生成。
-- 视频节点：`content` 是当前可播放的视频 URL，通常是 `blob:` URL；`storageKey` 指向本地视频 Blob；`bytes/mimeType` 保存文件信息。
 - 文本节点：`content` 保存文本内容；`fontSize` 保存字体大小；`prompt/status/errorDetails` 保存生成状态。
-- 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本、图片或视频；上游输入通过 `connections` 计算。
+- 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本或图片；上游输入通过 `connections` 计算。
 - 图片组节点：根节点用 `isBatchRoot/batchChildIds/primaryImageId/imageBatchExpanded` 记录批量生成结果；子图节点用 `batchRootId` 指回根节点。
 
 ## 连线结构
@@ -131,6 +129,7 @@ type CanvasConnection = {
 type CanvasAssistantSession = {
   id: string;
   title: string;
+  summary?: string;
   messages: CanvasAssistantMessage[];
   createdAt: string;
   updatedAt: string;
@@ -143,15 +142,16 @@ type CanvasAssistantSession = {
 type CanvasAssistantMessage = {
   id: string;
   role: "user" | "assistant";
-  mode: "ask" | "image";
+  mode: "agent";
   text: string;
   isLoading?: boolean;
   references?: CanvasAssistantReference[];
-  images?: CanvasAssistantImage[];
+  toolRequest?: CanvasAgentToolRequest;
+  logs?: string[];
 };
 ```
 
-图片引用和助手生成图片也遵循同一套图片存储规则：
+右侧画布 Agent 不再保存助手内生图结果；引用图片仍遵循同一套图片存储规则：
 
 - `dataUrl` 字段当前可能是 `blob:` URL，也可能是旧数据中的 `data:image/...`。
 - `storageKey` 存在时，以 `storageKey` 为准读取图片 Blob。

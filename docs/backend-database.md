@@ -75,33 +75,32 @@
 |------------------|--------|-------------------------------|
 | `id`             | string | 主键                            |
 | `title`          | string | 标题                            |
-| `type`           | string | 素材类型：`text`、`image`、`video` 等 |
+| `type`           | string | 素材类型：`text`、`image` 等 |
 | `cover_url`      | string | 封面图                           |
 | `tags`           | json   | 标签列表                          |
 | `category`       | string | 分类标识                          |
 | `description`    | string | 描述                            |
 | `content`        | text   | 文本或 Markdown 内容               |
-| `url`            | string | 图片、视频等媒体地址                    |
+| `url`            | string | 图片等媒体地址                          |
 | `created_at`     | string | 创建时间                          |
 | `updated_at`     | string | 更新时间                          |
 
 ### admin_models
 
-后台模型配置表。用于保存前端 API Key 配置弹窗可选择的图片分组、视频模型、解析模型，以及后端免费调用的提示词模型。
+后台模型配置表。用于保存前端 API Key 配置弹窗可选择的图片分组、解析模型，以及后端免费调用的提示词模型。
 
 | 字段           | 类型     | 说明                     |
 |--------------|--------|------------------------|
 | `id`         | string | 主键                     |
 | `name`       | string | 前端展示名称                 |
-| `model_id`   | string | 视频/解析/提示词实际请求上游接口的模型 ID，留空时使用展示名称 |
-| `type`       | string | 模型类型：`image`、`video`、`parse`、`prompt` |
+| `model_id`   | string | 解析/提示词实际请求上游接口的模型 ID，留空时使用展示名称 |
+| `type`       | string | 模型类型：`image`、`parse`、`prompt`、`detail_prompt` |
 | `api_url`    | string | OpenAI 兼容接口地址         |
 | `api_key`    | string | 后台专用密钥；目前仅提示词模型使用，不会返回给用户侧 |
 | `tier_models` | json | 图片分组各清晰度对应的实际模型 ID，例如 `512`、`1k`、`2k`、`4k` |
 | `default_tier` | string | 图片分组默认清晰度，新建画布节点或切换到该分组时优先使用 |
-| `supported_sizes` | json | 图片分组支持的画布比例，或视频模型支持的生成尺寸，例如 `auto`、`1:1`、`16:9`、`1280x720`、`3840x2160` |
-| `reference_limit` | number | 图片分组或视频模型允许上传、粘贴、携带的参考图数量 |
-| `video_capabilities` | json | 视频模型能力配置，包含市场/场景、支持比例、画质、时长、默认值、参考图/参考视频/参考音频数量和参考视频总时长上限 |
+| `supported_sizes` | json | 图片分组支持的画布比例，例如 `auto`、`1:1`、`16:9` |
+| `reference_limit` | number | 图片分组允许上传、粘贴、携带的参考图数量 |
 | `enabled`    | bool   | 是否启用                   |
 | `remark`     | string | 备注                     |
 | `created_at` | string | 创建时间                   |
@@ -138,7 +137,6 @@
 | `modelCosts` | object[] | 模型算力点配置       |
 | `defaultModel`    | string   | 默认模型           |
 | `defaultImageModel` | string | 默认图片模型         |
-| `defaultVideoModel` | string | 默认视频模型         |
 | `defaultTextModel` | string  | 默认文本模型         |
 | `systemPrompt`    | string   | 系统提示词          |
 | `allowCustomChannel` | bool    | 是否允许用户自定义渠道，默认允许，关闭后前端只提供走后端渠道的模式 |

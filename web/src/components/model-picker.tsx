@@ -14,15 +14,16 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
-    type?: "image" | "video" | "parse" | "prompt" | "detail_prompt";
+    type?: "image" | "parse" | "prompt" | "detail_prompt" | Array<"image" | "parse" | "prompt" | "detail_prompt">;
 };
 
 export function ModelPicker({ config, value, onChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, type }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useMemo(() => {
-        const scopedModels = type ? config.models.filter((model) => config.modelTypes[model] === type) : config.models;
-        const currentValue = value && (!type || config.modelTypes[value] === type) ? [value] : [];
+        const allowedTypes = type ? (Array.isArray(type) ? type : [type]) : null;
+        const scopedModels = allowedTypes ? config.models.filter((model) => allowedTypes.includes(config.modelTypes[model])) : config.models;
+        const currentValue = value && (!allowedTypes || allowedTypes.includes(config.modelTypes[value])) ? [value] : [];
         return Array.from(new Set([...currentValue, ...scopedModels].filter(Boolean)));
     }, [config.modelTypes, config.models, type, value]);
     const current = value && options.includes(value) ? value : "";

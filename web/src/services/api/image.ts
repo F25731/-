@@ -1,6 +1,6 @@
 ﻿import axios from "axios";
 
-import { DEFAULT_IMAGE_ASPECT_VALUES } from "@/constant/image-model-options";
+import { DEFAULT_IMAGE_ASPECT_VALUES, type ImageAspectValue } from "@/constant/image-model-options";
 import { buildApiUrl, resolveModelRuntimeConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
@@ -45,13 +45,13 @@ const QUALITY_BASE: Record<string, number> = {
     hd: 2048,
 };
 const MAX_IMAGE_GENERATION_COUNT = 8;
-const ALLOWED_REQUEST_SIZES = new Set(DEFAULT_IMAGE_ASPECT_VALUES);
+const ALLOWED_REQUEST_SIZES = new Set<string>(DEFAULT_IMAGE_ASPECT_VALUES);
 const IMAGE_JOB_CREATE_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
-type ImageJobStatus = "pending" | "running" | "succeeded" | "failed";
+type ImageJobStatus = "pending" | "running" | "succeeded" | "failed" | "canceled";
 
 type ImageJobCreateResponse = {
     code?: number;
@@ -73,8 +73,11 @@ type ImageJobStatusResponse = {
     msg?: string;
 };
 
-type ImageJobRequestOptions = {
+type ImageJobSnapshot = NonNullable<ImageJobStatusResponse["data"]>;
+
+export type ImageJobRequestOptions = {
     onCreated?: (jobId: string) => void;
+    onStatus?: (status: ImageJobStatus, jobId: string, error?: string) => void;
 };
 
 function normalizeQuality(_quality: string) {
@@ -98,7 +101,7 @@ function resolveSize(quality: string, ratio: string): string | undefined {
 
     const longSideRaw = Math.sqrt(targetPixels * longRatio);
     const longSide = Math.floor(longSideRaw / 16) * 16;
-    const shortSide = Math.round((longSide / longRatio) / 16) * 16;
+    const shortSide = Math.round(longSide / longRatio / 16) * 16;
 
     const width = isLandscape ? longSide : shortSide;
     const height = isLandscape ? shortSide : longSide;
@@ -110,7 +113,7 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     const value = size.trim();
     if (!value || value === "auto") return undefined;
     if (!ALLOWED_REQUEST_SIZES.has(value)) return undefined;
-    return (quality && resolveSize(quality, value)) || value;
+    return (quality && resolveSize(quality, value as ImageAspectValue)) || value;
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -246,7 +249,6 @@ function aiModel(config: AiConfig) {
     return resolveModelRuntimeConfig(config, config.model).modelId || config.model;
 }
 
-
 function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
@@ -316,35 +318,36 @@ async function requestImageJob(kind: "generations" | "edits", body: unknown, hea
         throw new Error(created.data?.msg || "Image job creation failed");
     }
     options?.onCreated?.(jobId);
-    return pollImageJob(jobId);
+    options?.onStatus?.(created.data?.data?.status || "pending", jobId);
+    return waitImageJob(jobId, options);
 }
 
-export async function resumeImageJob(jobId: string) {
+export async function resumeImageJob(jobId: string, options?: ImageJobRequestOptions) {
     try {
-        return await pollImageJob(jobId);
+        return await waitImageJob(jobId, options);
     } catch (error) {
         throw normalizeAiError(error, "图片任务恢复失败");
     }
 }
 
-async function pollImageJob(jobId: string) {
+async function waitImageJob(jobId: string, options?: ImageJobRequestOptions) {
+    return pollImageJob(jobId, options);
+}
+
+async function pollImageJob(jobId: string, options?: ImageJobRequestOptions) {
     const startedAt = Date.now();
+    let lastStatus: ImageJobStatus | "" = "";
     while (Date.now() - startedAt < IMAGE_JOB_POLL_TIMEOUT_MS) {
         await sleep(IMAGE_JOB_POLL_INTERVAL_MS);
         try {
-            const response = await axios.get<ImageJobStatusResponse>(`/api/image-jobs/status/${encodeURIComponent(jobId)}`, {
-                timeout: IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS,
-                validateStatus: () => true,
-            });
-            if (response.status < 200 || response.status >= 300 || response.data?.code !== 0) {
-                const message = response.data?.msg || "Image job status request failed";
-                if (response.status === 404) throw new Error(message);
-                continue;
-            }
-
-            const job = response.data.data;
+            const job = await readImageJobStatus(jobId);
             if (!job) continue;
+            if (job.status !== lastStatus) {
+                lastStatus = job.status;
+                options?.onStatus?.(job.status, jobId, job.error);
+            }
             if (job.status === "succeeded") return parseImagePayload(job.data || {});
+            if (job.status === "canceled") throw new Error(job.error || "Image generation canceled");
             if (job.status === "failed") throw new Error(job.error || "Image generation failed");
         } catch (error) {
             if (axios.isAxiosError(error) && !error.response) continue;
@@ -352,6 +355,26 @@ async function pollImageJob(jobId: string) {
         }
     }
     throw new Error("Image generation timed out");
+}
+
+async function readImageJobStatus(jobId: string): Promise<ImageJobSnapshot | null> {
+    const response = await axios.get<ImageJobStatusResponse>(`/api/image-jobs/status/${encodeURIComponent(jobId)}`, {
+        timeout: IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300 || response.data?.code !== 0) {
+        const message = response.data?.msg || "Image job status request failed";
+        if (response.status === 404) throw new Error(message);
+        return null;
+    }
+    return response.data.data || null;
+}
+
+export async function cancelImageJob(jobId: string) {
+    await axios.post(`/api/image-jobs/cancel/${encodeURIComponent(jobId)}`, undefined, {
+        timeout: IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+    });
 }
 
 function sleep(ms: number) {

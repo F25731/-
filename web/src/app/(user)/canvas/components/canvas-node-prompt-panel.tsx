@@ -84,11 +84,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onConfigChange(node.id, { model, size: normalizeImageSizeForModel(config, model, config.size), imageTier: defaultImageTierForModel(config, model) });
             return;
         }
-        if (mode === "video") {
-            updateConfig("videoModel", model);
-            onConfigChange(node.id, { model });
-            return;
-        }
         updateConfig("textModel", model);
         onConfigChange(node.id, { model });
     };
@@ -210,7 +205,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 disabled={isDisabled}
                 className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
-                placeholder={isNodeGenerating ? "正在生成中" : mode === "video" ? "输入视频生成要求" : mode === "image" ? (hasImageContent ? "输入图片修改要求" : "输入图片生成要求") : hasTextContent ? "输入文本修改要求" : "输入文本生成要求"}
+                placeholder={isNodeGenerating ? "正在生成中" : mode === "image" ? (hasImageContent ? "输入图片修改要求" : "输入图片生成要求") : hasTextContent ? "输入文本修改要求" : "输入文本生成要求"}
             />
             {promptMenu
                 ? createPortal(
@@ -231,13 +226,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
-                            <ModelPicker
-                                config={config}
-                                value={node.metadata?.model || config.imageModel}
-                                onChange={selectModel}
-                                onMissingConfig={() => openConfigDialog(true)}
-                                type="image"
-                            />
+                            <ModelPicker config={config} value={node.metadata?.model || config.imageModel} onChange={selectModel} onMissingConfig={() => openConfigDialog(true)} type="image" />
                             <CanvasImageSettingsPopover
                                 config={config}
                                 placement="topLeft"
@@ -246,49 +235,35 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
-                            <Button
-                                type="default"
-                                className="!h-10 !min-w-10 !rounded-full !px-3"
-                                icon={<Plus className="size-4" />}
-                                onClick={() => onUploadReference?.(node.id)}
-                                title="上传参考图"
-                                aria-label="上传参考图"
-                            />
+                            <Button type="default" className="!h-10 !min-w-10 !rounded-full !px-3" icon={<Plus className="size-4" />} onClick={() => onUploadReference?.(node.id)} title="上传参考图" aria-label="上传参考图" />
                         </>
-                    ) : mode === "video" ? (
-                        <ModelPicker
-                            config={config}
-                            value={node.metadata?.model || config.videoModel}
-                            onChange={selectModel}
-                            onMissingConfig={() => openConfigDialog(true)}
-                            type="video"
-                        />
                     ) : (
-                        <ModelPicker
-                            config={config}
-                            value={node.metadata?.model || config.textModel}
-                            onChange={selectModel}
-                            onMissingConfig={() => openConfigDialog(true)}
-                        />
+                        <ModelPicker config={config} value={node.metadata?.model || config.textModel} onChange={selectModel} onMissingConfig={() => openConfigDialog(true)} />
                     )}
                 </div>
-                <Button
-                    type="primary"
-                    className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                    disabled={isDisabled || !prompt.trim()}
-                    onClick={submit}
-                    aria-label="生成"
-                >
-                    <span className="flex items-center gap-1.5">
-                        {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-                    </span>
+                <Button type="primary" className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3" disabled={isDisabled || !prompt.trim()} onClick={submit} aria-label="生成">
+                    <span className="flex items-center gap-1.5">{isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</span>
                 </Button>
             </div>
         </div>
     );
 }
 
-function PromptInputContextMenu({ x, y, canPasteReference, onPasteReference, onPasteText, onPointerDown }: { x: number; y: number; canPasteReference: boolean; onPasteReference: () => void; onPasteText: () => void; onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void }) {
+function PromptInputContextMenu({
+    x,
+    y,
+    canPasteReference,
+    onPasteReference,
+    onPasteText,
+    onPointerDown,
+}: {
+    x: number;
+    y: number;
+    canPasteReference: boolean;
+    onPasteReference: () => void;
+    onPasteText: () => void;
+    onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div className="fixed z-[1300] min-w-44 overflow-hidden rounded-xl border py-1 shadow-2xl" style={{ left: x, top: y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onPointerDown={onPointerDown}>
@@ -309,7 +284,7 @@ function PromptMenuButton({ icon, label, onClick }: { icon: ReactNode; label: st
 }
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
-    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : "image";
+    return type === CanvasNodeType.Text ? "text" : "image";
 }
 
 function getInitialPrompt(node: CanvasNodeData) {
@@ -318,18 +293,14 @@ function getInitialPrompt(node: CanvasNodeData) {
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : globalConfig.textModel;
+    const defaultModel = mode === "image" ? globalConfig.imageModel : globalConfig.textModel;
     const model = node.metadata?.model || defaultModel || globalConfig.model;
     return {
         ...globalConfig,
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        imageTier: mode === "image" ? normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || defaultImageTierForModel(globalConfig, model)) : node?.metadata?.imageTier || globalConfig.imageTier || defaultConfig.imageTier,
+        imageTier: normalizeImageTierForModel(globalConfig, model, node?.metadata?.imageTier || globalConfig.imageTier || defaultImageTierForModel(globalConfig, model)),
         size: mode === "image" ? normalizeImageSizeForModel(globalConfig, model, node.metadata?.size || globalConfig.size || defaultConfig.size) : node.metadata?.size || globalConfig.size || defaultConfig.size,
-        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),
     };
 }
-
-
