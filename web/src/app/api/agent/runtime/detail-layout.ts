@@ -183,15 +183,21 @@ export function buildDetailWorkflowAction(name: string, args: Record<string, unk
               ? "retry"
               : name === "canvas_add_detail_screen"
                 ? "add-screen"
-                : name === "canvas_update_detail_screen"
-                  ? "update-screen"
-                  : name === "canvas_remove_detail_screen"
-                    ? "remove-screen"
-                    : name === "canvas_move_detail_screen"
-                      ? "move-screen"
-                      : name === "canvas_regenerate_detail_workflow"
-                        ? "regenerate-all"
-                        : "continue";
+                : name === "canvas_add_detail_screens"
+                  ? "add-screens"
+                  : name === "canvas_update_detail_screen"
+                    ? "update-screen"
+                    : name === "canvas_update_detail_screens"
+                      ? "update-screens"
+                      : name === "canvas_remove_detail_screen"
+                        ? "remove-screen"
+                        : name === "canvas_remove_detail_screens"
+                          ? "remove-screens"
+                          : name === "canvas_move_detail_screen"
+                            ? "move-screen"
+                            : name === "canvas_regenerate_detail_workflow"
+                              ? "regenerate-all"
+                              : "continue";
     return {
         type: "canvas.runDetailWorkflow",
         action,
@@ -214,10 +220,71 @@ export function buildDetailWorkflowAction(name: string, args: Record<string, unk
             String(args.style_summary || "")
                 .trim()
                 .slice(0, 8000) || undefined,
+        screenDrafts: normalizeScreenDrafts(args.screens),
+        screenUpdates: normalizeScreenUpdates(args.updates),
+        screenIndices: numberArray(args.screen_indices, 11),
         generationMode: args.generation_mode === "rough" ? "rough" : undefined,
         executionMode: args.execution_mode === "continuous" ? "continuous" : args.execution_mode === "step" ? "step" : undefined,
         composeWhenComplete: args.compose_when_complete !== false,
     };
+}
+
+function normalizeScreenDrafts(value: unknown) {
+    if (!Array.isArray(value)) return undefined;
+    const screens = value.slice(0, 6).flatMap((raw) => {
+        if (!raw || typeof raw !== "object") return [];
+        const item = raw as Record<string, unknown>;
+        const prompt = String(item.prompt || "")
+            .trim()
+            .slice(0, 12000);
+        if (!prompt) return [];
+        return [
+            {
+                title: String(item.title || "新增内容")
+                    .trim()
+                    .slice(0, 64),
+                goal: String(item.goal || "展示商品卖点")
+                    .trim()
+                    .slice(0, 1000),
+                prompt,
+            },
+        ];
+    });
+    return screens.length ? screens : undefined;
+}
+
+function normalizeScreenUpdates(value: unknown) {
+    if (!Array.isArray(value)) return undefined;
+    const seen = new Set<number>();
+    const updates = value.slice(0, 12).flatMap((raw) => {
+        if (!raw || typeof raw !== "object") return [];
+        const item = raw as Record<string, unknown>;
+        const screenIndex = Math.floor(Number(item.screen_index));
+        const prompt = String(item.prompt || "")
+            .trim()
+            .slice(0, 12000);
+        if (!screenIndex || seen.has(screenIndex) || !prompt) return [];
+        seen.add(screenIndex);
+        return [
+            {
+                screenIndex,
+                title: String(item.title || `第 ${screenIndex} 屏`)
+                    .trim()
+                    .slice(0, 64),
+                goal: String(item.goal || "展示商品卖点")
+                    .trim()
+                    .slice(0, 1000),
+                prompt,
+            },
+        ];
+    });
+    return updates.length ? updates : undefined;
+}
+
+function numberArray(value: unknown, limit: number) {
+    if (!Array.isArray(value)) return undefined;
+    const numbers = [...new Set(value.map((item) => Math.floor(Number(item))).filter((item) => item > 0))].slice(0, limit);
+    return numbers.length ? numbers : undefined;
 }
 
 function normalizeScreens(value: unknown): DetailScreenInput[] {

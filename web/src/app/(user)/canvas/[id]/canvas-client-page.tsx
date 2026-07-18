@@ -42,7 +42,17 @@ import { applyCanvasOperation, type CanvasOperation } from "../utils/canvas-oper
 import { findOpenNodePosition, minimallyRevealRect } from "../utils/canvas-layout";
 import { startCanvasProjectLock } from "../utils/canvas-tab-lock";
 import { buildDetailImagePrompt, buildDetailReferencePlan, composeDetailLongImage, detailResultForConfig, detailWorkflowConfigs, detailWorkflowResults, type DetailWorkflowOperation, type DetailWorkflowScreen } from "../utils/detail-workflow";
-import { addDetailWorkflowScreen, markDetailCompositionStale, moveDetailWorkflowScreen, removeDetailWorkflowScreen, updateDetailWorkflowScreen, updateDetailWorkflowStyle } from "../utils/detail-workflow-mutations";
+import {
+    addDetailWorkflowScreen,
+    addDetailWorkflowScreens,
+    markDetailCompositionStale,
+    moveDetailWorkflowScreen,
+    removeDetailWorkflowScreen,
+    removeDetailWorkflowScreens,
+    updateDetailWorkflowScreen,
+    updateDetailWorkflowScreens,
+    updateDetailWorkflowStyle,
+} from "../utils/detail-workflow-mutations";
 import { MAX_IMAGE_GENERATION_COUNT } from "@/components/image-settings-panel";
 import {
     CanvasNodeType,
@@ -2791,11 +2801,17 @@ function InfiniteCanvasPage() {
             const generationRunIds: string[] = [];
             let executionFailed = false;
             if (operation.action === "create") emitDetailEvent("detail.workflow.created", `已创建 ${configs.length} 屏详情图工作流`, { status: "completed" });
-            const commitDetailMutation = (mutation: { nodes: CanvasNodeData[]; connections: CanvasConnection[]; configId?: string }) => {
+            const commitDetailMutation = (mutation: { nodes: CanvasNodeData[]; connections: CanvasConnection[]; configId?: string; configIds?: string[] }) => {
                 commitNodes(() => mutation.nodes);
                 commitConnections(() => mutation.connections);
                 configs = detailWorkflowConfigs(nodesRef.current, workflowId);
-                return mutation.configId ? configs.find((config) => config.id === mutation.configId) : undefined;
+                return {
+                    target: mutation.configId ? configs.find((config) => config.id === mutation.configId) : undefined,
+                    targets: (mutation.configIds || []).flatMap((configId) => {
+                        const config = configs.find((item) => item.id === configId);
+                        return config ? [config] : [];
+                    }),
+                };
             };
 
             const prepareConfig = (config: CanvasNodeData) => {
@@ -2900,20 +2916,49 @@ function InfiniteCanvasPage() {
                 return false;
             };
 
+            const generateDetailTargets = async (targets: CanvasNodeData[], forceRetry: boolean) => {
+                const ordered = [...targets].sort((left, right) => Number(left.metadata?.detailScreenIndex || 0) - Number(right.metadata?.detailScreenIndex || 0));
+                if (generationMode === "precise") {
+                    for (const target of ordered) {
+                        if (!(await generateConfig(target, forceRetry))) return false;
+                    }
+                    return true;
+                }
+                const first = ordered.find((target) => Number(target.metadata?.detailScreenIndex || 0) === 1);
+                if (first && !(await generateConfig(first, forceRetry))) return false;
+                const remaining = first ? ordered.filter((target) => target.id !== first.id) : ordered;
+                const results = await Promise.all(remaining.map((target) => generateConfig(target, forceRetry)));
+                return results.every(Boolean);
+            };
+
             if (operation.action === "add-screen") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
-                const target = commitDetailMutation(addDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, { title: operation.screenTitle, goal: operation.screenGoal, prompt: operation.screenPrompt }, operation.afterScreenIndex));
+                const { target } = commitDetailMutation(
+                    addDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, { title: operation.screenTitle, goal: operation.screenGoal, prompt: operation.screenPrompt }, operation.afterScreenIndex),
+                );
                 if (!target) throw new Error("新增详情屏失败");
                 emitDetailEvent("detail.workflow.updated", `已向当前工作流新增第 ${target.metadata?.detailScreenIndex || configs.length} 屏，原有屏幕保持不变`, { nodeId: target.id, status: "completed" });
                 executionFailed = !(await generateConfig(target));
+            } else if (operation.action === "add-screens") {
+                commitNodes((items) => markDetailCompositionStale(items, workflowId));
+                const { targets } = commitDetailMutation(addDetailWorkflowScreens(nodesRef.current, connectionsRef.current, workflowId, operation.screenDrafts || [], operation.afterScreenIndex));
+                if (!targets.length) throw new Error("批量新增详情屏失败");
+                emitDetailEvent("detail.workflow.updated", `已向当前工作流新增 ${targets.length} 屏，原有屏幕保持不变`, { status: "completed" });
+                executionFailed = !(await generateDetailTargets(targets, false));
             } else if (operation.action === "update-screen") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
-                const target = commitDetailMutation(
+                const { target } = commitDetailMutation(
                     updateDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, Number(operation.screenIndex || 0), { title: operation.screenTitle, goal: operation.screenGoal, prompt: operation.screenPrompt }),
                 );
                 if (!target) throw new Error("修改详情屏失败");
                 emitDetailEvent("detail.workflow.updated", `仅更新第 ${operation.screenIndex || 0} 屏，其他屏幕保持不变`, { nodeId: target.id, status: "completed" });
                 executionFailed = !(await generateConfig(target, true));
+            } else if (operation.action === "update-screens") {
+                commitNodes((items) => markDetailCompositionStale(items, workflowId));
+                const { targets } = commitDetailMutation(updateDetailWorkflowScreens(nodesRef.current, connectionsRef.current, workflowId, operation.screenUpdates || []));
+                if (!targets.length) throw new Error("批量修改详情屏失败");
+                emitDetailEvent("detail.workflow.updated", `仅更新指定的 ${targets.length} 屏，其他屏幕保持不变`, { status: "completed" });
+                executionFailed = !(await generateDetailTargets(targets, true));
             } else if (operation.action === "remove-screen") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
                 commitDetailMutation(removeDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, Number(operation.screenIndex || 0)));
@@ -2926,6 +2971,21 @@ function InfiniteCanvasPage() {
                 return {
                     ok: true,
                     message: `已删除第 ${operation.screenIndex || 0} 屏，保留其余 ${configs.length} 屏且没有重新生成`,
+                    nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIds), viewport: viewportRef.current },
+                };
+            } else if (operation.action === "remove-screens") {
+                const indices = operation.screenIndices || [];
+                commitNodes((items) => markDetailCompositionStale(items, workflowId));
+                commitDetailMutation(removeDetailWorkflowScreens(nodesRef.current, connectionsRef.current, workflowId, indices));
+                emitDetailEvent("detail.workflow.updated", `已删除指定的 ${indices.length} 屏，其他屏幕未重新生成`, { status: "completed" });
+                const remainingComplete = detailWorkflowResults(nodesRef.current, workflowId).length >= configs.length;
+                if (remainingComplete && shouldComposeWhenComplete) {
+                    const composed = await composeWorkflow();
+                    return { ...composed, message: `已删除指定的 ${indices.length} 屏，未重新生成其余图片；合成长图已更新` };
+                }
+                return {
+                    ok: true,
+                    message: `已删除指定的 ${indices.length} 屏，保留其余 ${configs.length} 屏且没有重新生成`,
                     nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIds), viewport: viewportRef.current },
                 };
             } else if (operation.action === "move-screen") {
@@ -3032,11 +3092,15 @@ function InfiniteCanvasPage() {
                 const message =
                     operation.action === "add-screen"
                         ? `仅新增并生成了第 ${operation.afterScreenIndex === undefined ? configs.length : Math.min(configs.length, operation.afterScreenIndex + 1)} 屏，原有屏幕未重新生成；合成长图已更新`
-                        : operation.action === "update-screen"
-                          ? `仅重新生成了第 ${operation.screenIndex || 0} 屏，其他屏幕未重新生成；合成长图已更新`
-                          : operation.action === "regenerate-all"
-                            ? `已按要求重新生成全部 ${configs.length} 屏，并更新合成长图`
-                            : composed.message;
+                        : operation.action === "add-screens"
+                          ? `仅新增并生成了 ${operation.screenDrafts?.length || 0} 屏，原有屏幕未重新生成；合成长图只更新了一次`
+                          : operation.action === "update-screen"
+                            ? `仅重新生成了第 ${operation.screenIndex || 0} 屏，其他屏幕未重新生成；合成长图已更新`
+                            : operation.action === "update-screens"
+                              ? `仅重新生成了指定的 ${operation.screenUpdates?.length || 0} 屏，其他屏幕未重新生成；合成长图只更新了一次`
+                              : operation.action === "regenerate-all"
+                                ? `已按要求重新生成全部 ${configs.length} 屏，并更新合成长图`
+                                : composed.message;
                 return { ...composed, message, generationRunIds, imageJobIds };
             }
             return {

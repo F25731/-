@@ -157,6 +157,31 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
         required: ["title", "goal", "prompt"],
         additionalProperties: false,
     }),
+    tool("canvas_add_detail_screens", "Add multiple screens to an existing detail workflow in one batch. Generate only the new screens and compose the long image once after the batch completes.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            after_screen_index: { type: "integer", minimum: 0, maximum: 12 },
+            screens: {
+                type: "array",
+                minItems: 1,
+                maxItems: 6,
+                items: {
+                    type: "object",
+                    properties: {
+                        title: { type: "string" },
+                        goal: { type: "string" },
+                        prompt: { type: "string" },
+                    },
+                    required: ["title", "goal", "prompt"],
+                    additionalProperties: false,
+                },
+            },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["screens"],
+        additionalProperties: false,
+    }),
     tool("canvas_update_detail_screen", "Modify and regenerate exactly one existing detail screen in place. Preserve every other screen and refresh the composed long image after success.", {
         type: "object",
         properties: {
@@ -170,6 +195,31 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
         required: ["screen_index", "title", "goal", "prompt"],
         additionalProperties: false,
     }),
+    tool("canvas_update_detail_screens", "Modify and regenerate multiple specified detail screens in one batch. Preserve all unmentioned screens and compose the long image once after the batch completes.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            updates: {
+                type: "array",
+                minItems: 1,
+                maxItems: 12,
+                items: {
+                    type: "object",
+                    properties: {
+                        screen_index: { type: "integer", minimum: 1, maximum: 12 },
+                        title: { type: "string" },
+                        goal: { type: "string" },
+                        prompt: { type: "string" },
+                    },
+                    required: ["screen_index", "title", "goal", "prompt"],
+                    additionalProperties: false,
+                },
+            },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["updates"],
+        additionalProperties: false,
+    }),
     tool("canvas_remove_detail_screen", "Remove exactly one screen from an existing detail workflow without regenerating the remaining screens, then refresh the composed long image.", {
         type: "object",
         properties: {
@@ -178,6 +228,16 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
             compose_when_complete: { type: "boolean" },
         },
         required: ["screen_index"],
+        additionalProperties: false,
+    }),
+    tool("canvas_remove_detail_screens", "Remove multiple specified screens from an existing detail workflow in one batch without regenerating any remaining image, then compose the long image once.", {
+        type: "object",
+        properties: {
+            workflow_id: { type: "string" },
+            screen_indices: { type: "array", minItems: 1, maxItems: 11, items: { type: "integer", minimum: 1, maximum: 12 } },
+            compose_when_complete: { type: "boolean" },
+        },
+        required: ["screen_indices"],
         additionalProperties: false,
     }),
     tool("canvas_move_detail_screen", "Move one existing screen to a new position in the same detail workflow without regenerating any image, then refresh the composed long image.", {
@@ -262,8 +322,11 @@ export function compileToolCall(item: ResponseOutputItem, snapshot: AgentCanvasS
         [
             "canvas_continue_detail_workflow",
             "canvas_add_detail_screen",
+            "canvas_add_detail_screens",
             "canvas_update_detail_screen",
+            "canvas_update_detail_screens",
             "canvas_remove_detail_screen",
+            "canvas_remove_detail_screens",
             "canvas_move_detail_screen",
             "canvas_regenerate_detail_workflow",
             "canvas_retry_detail_screen",
@@ -329,8 +392,11 @@ function detailToolDescription(name: string, args: Record<string, unknown>) {
     const index = Number(args.screen_index) || 1;
     if (name === "canvas_compose_detail_long_image") return "在浏览器合成详情页长图";
     if (name === "canvas_add_detail_screen") return `仅新增一屏详情图：${String(args.title || "新屏幕").slice(0, 48)}`;
+    if (name === "canvas_add_detail_screens") return `仅批量新增 ${Array.isArray(args.screens) ? args.screens.length : 0} 屏详情图`;
     if (name === "canvas_update_detail_screen") return `仅修改并重新生成详情图第 ${index} 屏`;
+    if (name === "canvas_update_detail_screens") return `仅批量修改并重新生成 ${Array.isArray(args.updates) ? args.updates.length : 0} 屏详情图`;
     if (name === "canvas_remove_detail_screen") return `仅删除详情图第 ${index} 屏`;
+    if (name === "canvas_remove_detail_screens") return `仅批量删除 ${Array.isArray(args.screen_indices) ? args.screen_indices.length : 0} 屏详情图`;
     if (name === "canvas_move_detail_screen") return `仅调整详情图第 ${index} 屏顺序`;
     if (name === "canvas_regenerate_detail_workflow") return "按用户明确要求重新生成全部详情图屏幕";
     if (name === "canvas_retry_detail_screen") return `重试详情图第 ${index} 屏`;

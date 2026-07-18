@@ -15,6 +15,7 @@ type MutationResult = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
     configId?: string;
+    configIds?: string[];
 };
 
 export function markDetailCompositionStale(nodes: CanvasNodeData[], workflowId: string) {
@@ -90,6 +91,19 @@ export function addDetailWorkflowScreen(nodes: CanvasNodeData[], connections: Ca
     return { nodes: syncDetailWorkflowPlan([...shifted, promptNode, configNode], workflowId), connections: nextConnections, configId };
 }
 
+export function addDetailWorkflowScreens(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, drafts: DetailScreenDraft[], afterScreenIndex?: number): MutationResult {
+    if (!drafts.length) throw new Error("批量新增详情屏不能为空");
+    let current = { nodes, connections } as MutationResult;
+    const configIds: string[] = [];
+    let after = afterScreenIndex;
+    for (const draft of drafts) {
+        current = addDetailWorkflowScreen(current.nodes, current.connections, workflowId, draft, after);
+        if (current.configId) configIds.push(current.configId);
+        after = after === undefined ? undefined : after + 1;
+    }
+    return { ...current, configIds };
+}
+
 export function updateDetailWorkflowScreen(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, screenIndex: number, draft: DetailScreenDraft): MutationResult {
     const configs = detailWorkflowConfigs(nodes, workflowId);
     const target = configs.find((config) => config.metadata?.detailScreenIndex === screenIndex);
@@ -110,6 +124,17 @@ export function updateDetailWorkflowScreen(nodes: CanvasNodeData[], connections:
     return { nodes: syncDetailWorkflowPlan(nextNodes, workflowId), connections, configId: target.id };
 }
 
+export function updateDetailWorkflowScreens(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, updates: Array<DetailScreenDraft & { screenIndex: number }>): MutationResult {
+    if (!updates.length) throw new Error("批量修改详情屏不能为空");
+    let current = { nodes, connections } as MutationResult;
+    const configIds: string[] = [];
+    for (const update of [...updates].sort((left, right) => left.screenIndex - right.screenIndex)) {
+        current = updateDetailWorkflowScreen(current.nodes, current.connections, workflowId, update.screenIndex, update);
+        if (current.configId) configIds.push(current.configId);
+    }
+    return { ...current, configIds };
+}
+
 export function removeDetailWorkflowScreen(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, screenIndex: number): MutationResult {
     const configs = detailWorkflowConfigs(nodes, workflowId);
     if (configs.length <= 1) throw new Error("详情图至少需要保留一屏");
@@ -128,6 +153,14 @@ export function removeDetailWorkflowScreen(nodes: CanvasNodeData[], connections:
         });
     const nextConnections = connections.filter((connection) => !removedIds.has(connection.fromNodeId) && !removedIds.has(connection.toNodeId));
     return { nodes: syncDetailWorkflowPlan(nextNodes, workflowId), connections: nextConnections };
+}
+
+export function removeDetailWorkflowScreens(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, screenIndices: number[]): MutationResult {
+    const unique = [...new Set(screenIndices.map((index) => Math.floor(index)).filter((index) => index > 0))].sort((left, right) => right - left);
+    if (!unique.length) throw new Error("批量删除详情屏不能为空");
+    let current = { nodes, connections } as MutationResult;
+    for (const index of unique) current = removeDetailWorkflowScreen(current.nodes, current.connections, workflowId, index);
+    return current;
 }
 
 export function moveDetailWorkflowScreen(nodes: CanvasNodeData[], connections: CanvasConnection[], workflowId: string, screenIndex: number, afterScreenIndex: number): MutationResult {

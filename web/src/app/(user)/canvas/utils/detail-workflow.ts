@@ -22,7 +22,7 @@ export type DetailWorkflowScreen = {
 
 export type DetailWorkflowOperation = {
     type: "canvas.runDetailWorkflow";
-    action: "create" | "continue" | "retry" | "compose" | "add-screen" | "update-screen" | "remove-screen" | "move-screen" | "regenerate-all";
+    action: "create" | "continue" | "retry" | "compose" | "add-screen" | "add-screens" | "update-screen" | "update-screens" | "remove-screen" | "remove-screens" | "move-screen" | "regenerate-all";
     workflowId?: string;
     generationMode?: DetailWorkflowMode;
     executionMode?: DetailWorkflowExecutionMode;
@@ -32,6 +32,9 @@ export type DetailWorkflowOperation = {
     screenGoal?: string;
     screenPrompt?: string;
     styleSummary?: string;
+    screenDrafts?: Array<{ title?: string; goal?: string; prompt?: string }>;
+    screenUpdates?: Array<{ screenIndex: number; title?: string; goal?: string; prompt?: string }>;
+    screenIndices?: number[];
     composeWhenComplete?: boolean;
 };
 
