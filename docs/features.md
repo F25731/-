@@ -154,7 +154,7 @@
 - Gin 提供 API 服务。
 - Docker 运行时由 Next.js 提供页面入口，`/api/*` 请求代理到内部 Go 服务。
 - GORM 管理数据库连接和自动迁移。
-- 支持 SQLite、MySQL、PostgreSQL。
+- 支持 MySQL、PostgreSQL，不使用 SQLite。
 - 数据库保存用户、提示词分组、提示词和服务器素材。
 - 业务接口统一返回 `{ code, data, msg }`。
 

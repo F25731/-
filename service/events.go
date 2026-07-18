@@ -141,10 +141,16 @@ func NewEventFilter(topics []string, jobID string, projectID string, sessionID s
 
 func replayEventsLocked(filter EventFilter) []Event {
 	result := []Event{}
-	for _, event := range globalEventBus.events {
-		if filter.AfterID != "" && event.ID <= filter.AfterID {
-			continue
+	start := 0
+	if filter.AfterID != "" {
+		for index, event := range globalEventBus.events {
+			if event.ID == filter.AfterID {
+				start = index + 1
+				break
+			}
 		}
+	}
+	for _, event := range globalEventBus.events[start:] {
 		if eventMatchesFilter(event, filter) {
 			result = append(result, event)
 		}

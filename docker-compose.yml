@@ -49,7 +49,6 @@ services:
       PORT: "8080"
       STORAGE_DRIVER: mysql
       DATABASE_DSN: canvas:infinite_canvas_mysql_2026@tcp(mysql:3306)/infinite_canvas?charset=utf8mb4&parseTime=True&loc=Local
-      LEGACY_SQLITE_DSN: data/infinite-canvas.db
       REDIS_ADDR: redis:6379
     volumes:
       - ./data:/app/data

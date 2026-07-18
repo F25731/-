@@ -15,9 +15,8 @@ type Config struct {
 	AdminPassword                string `env:"ADMIN_PASSWORD" envDefault:"infinite-canvas"`
 	JWTSecret                    string `env:"JWT_SECRET" envDefault:"infinite-canvas"`
 	JWTExpireHours               int    `env:"JWT_EXPIRE_HOURS" envDefault:"168"`
-	StorageDriver                string `env:"STORAGE_DRIVER" envDefault:"sqlite"`
-	DatabaseDSN                  string `env:"DATABASE_DSN" envDefault:"data/infinite-canvas.db"`
-	LegacySQLiteDSN              string `env:"LEGACY_SQLITE_DSN" envDefault:"data/infinite-canvas.db"`
+	StorageDriver                string `env:"STORAGE_DRIVER" envDefault:"mysql"`
+	DatabaseDSN                  string `env:"DATABASE_DSN" envDefault:"root@tcp(127.0.0.1:3306)/infinite_canvas?charset=utf8mb4&parseTime=True&loc=Local"`
 	RedisAddr                    string `env:"REDIS_ADDR" envDefault:"127.0.0.1:6379"`
 	RedisPassword                string `env:"REDIS_PASSWORD"`
 	RedisDB                      int    `env:"REDIS_DB" envDefault:"0"`

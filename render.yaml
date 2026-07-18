@@ -17,6 +17,6 @@ services:
       - key: PORT
         value: 3000
       - key: STORAGE_DRIVER
-        value: sqlite
+        value: postgres
       - key: DATABASE_DSN
-        value: data/infinite-canvas.db
+        sync: false
