@@ -35,6 +35,7 @@ export type DetailWorkflowOperation = {
     screenDrafts?: Array<{ title?: string; goal?: string; prompt?: string }>;
     screenUpdates?: Array<{ screenIndex: number; title?: string; goal?: string; prompt?: string }>;
     screenIndices?: number[];
+    editScope?: "current" | "downstream" | "all";
     composeWhenComplete?: boolean;
 };
 
@@ -44,7 +45,15 @@ export function detailWorkflowConfigs(nodes: CanvasNodeData[], workflowId: strin
 
 export function detailWorkflowResults(nodes: CanvasNodeData[], workflowId: string) {
     return nodes
-        .filter((node) => node.metadata?.detailWorkflowId === workflowId && node.metadata.detailRole === "screen-result" && Boolean(node.metadata.content) && node.metadata.status !== "error" && node.metadata.status !== "loading")
+        .filter(
+            (node) =>
+                node.metadata?.detailWorkflowId === workflowId &&
+                node.metadata.detailRole === "screen-result" &&
+                Boolean(node.metadata.content) &&
+                node.metadata.status !== "error" &&
+                node.metadata.status !== "loading" &&
+                node.metadata.detailNeedsRegeneration !== true,
+        )
         .sort((left, right) => Number(left.metadata?.detailScreenIndex || 0) - Number(right.metadata?.detailScreenIndex || 0));
 }
 

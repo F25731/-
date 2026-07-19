@@ -49,6 +49,7 @@ import {
     moveDetailWorkflowScreen,
     removeDetailWorkflowScreen,
     removeDetailWorkflowScreens,
+    selectDetailEditTargets,
     updateDetailWorkflowScreen,
     updateDetailWorkflowScreens,
     updateDetailWorkflowStyle,
@@ -2797,6 +2798,8 @@ function InfiniteCanvasPage() {
             const firstConfig = configs[0];
             const generationMode = operation.generationMode || firstConfig.metadata?.detailGenerationMode || "precise";
             const executionMode = operation.executionMode || firstConfig.metadata?.detailExecutionMode || "continuous";
+            const editScope = operation.editScope || "current";
+            const editScopeLabel = editScope === "downstream" ? "本屏及后续关联屏" : editScope === "all" ? "全部屏幕" : "仅本屏";
             const imageJobIds: string[] = [];
             const generationRunIds: string[] = [];
             let executionFailed = false;
@@ -2881,7 +2884,8 @@ function InfiniteCanvasPage() {
             const generateConfig = async (config: CanvasNodeData, forceRetry = false) => {
                 const index = Number(config.metadata?.detailScreenIndex || 0);
                 const currentOutput = detailResultForConfig(nodesRef.current, connectionsRef.current, config.id);
-                if (currentOutput?.metadata?.content && !forceRetry) return true;
+                const needsRegeneration = config.metadata?.detailNeedsRegeneration === true || currentOutput?.metadata?.detailNeedsRegeneration === true;
+                if (currentOutput?.metadata?.content && !forceRetry && !needsRegeneration) return true;
                 if (currentOutput?.metadata?.status === NODE_STATUS_ERROR && !forceRetry) return false;
                 const prepared = prepareConfig(config);
                 emitDetailEvent("detail.screen.started", forceRetry ? `正在原节点重试第 ${index} 屏` : `正在生成第 ${index} 屏`, { nodeId: currentOutput?.id || config.id, status: "running" });
@@ -2909,6 +2913,7 @@ function InfiniteCanvasPage() {
                     );
                 }
                 if (result.ok && output?.metadata?.content) {
+                    commitNodes((items) => items.map((node) => (node.id === config.id || node.id === output.id ? { ...node, metadata: { ...node.metadata, detailNeedsRegeneration: false } } : node)));
                     emitDetailEvent("detail.screen.completed", `第 ${index} 屏已生成`, { nodeId: output.id, status: "completed" });
                     return true;
                 }
@@ -2931,6 +2936,17 @@ function InfiniteCanvasPage() {
                 return results.every(Boolean);
             };
 
+            const markDetailTargetsForRegeneration = (targets: CanvasNodeData[]) => {
+                const targetIds = new Set(targets.map((target) => target.id));
+                const resultIds = new Set(
+                    targets.flatMap((target) => {
+                        const result = detailResultForConfig(nodesRef.current, connectionsRef.current, target.id);
+                        return result ? [result.id] : [];
+                    }),
+                );
+                commitNodes((items) => items.map((node) => (targetIds.has(node.id) || resultIds.has(node.id) ? { ...node, metadata: { ...node.metadata, detailNeedsRegeneration: true } } : node)));
+            };
+
             if (operation.action === "add-screen") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
                 const { target } = commitDetailMutation(
@@ -2951,14 +2967,19 @@ function InfiniteCanvasPage() {
                     updateDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, Number(operation.screenIndex || 0), { title: operation.screenTitle, goal: operation.screenGoal, prompt: operation.screenPrompt }),
                 );
                 if (!target) throw new Error("修改详情屏失败");
-                emitDetailEvent("detail.workflow.updated", `仅更新第 ${operation.screenIndex || 0} 屏，其他屏幕保持不变`, { nodeId: target.id, status: "completed" });
-                executionFailed = !(await generateConfig(target, true));
+                const generationTargets = selectDetailEditTargets(configs, [Number(operation.screenIndex || 0)], editScope);
+                markDetailTargetsForRegeneration(generationTargets);
+                emitDetailEvent("detail.workflow.updated", `已更新第 ${operation.screenIndex || 0} 屏内容，生成范围：${editScopeLabel}`, { nodeId: target.id, status: "completed" });
+                executionFailed = !(await generateDetailTargets(generationTargets, true));
             } else if (operation.action === "update-screens") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
                 const { targets } = commitDetailMutation(updateDetailWorkflowScreens(nodesRef.current, connectionsRef.current, workflowId, operation.screenUpdates || []));
                 if (!targets.length) throw new Error("批量修改详情屏失败");
-                emitDetailEvent("detail.workflow.updated", `仅更新指定的 ${targets.length} 屏，其他屏幕保持不变`, { status: "completed" });
-                executionFailed = !(await generateDetailTargets(targets, true));
+                const changedIndices = (operation.screenUpdates || []).map((update) => update.screenIndex);
+                const generationTargets = selectDetailEditTargets(configs, changedIndices, editScope);
+                markDetailTargetsForRegeneration(generationTargets);
+                emitDetailEvent("detail.workflow.updated", `已更新指定的 ${targets.length} 屏内容，生成范围：${editScopeLabel}`, { status: "completed" });
+                executionFailed = !(await generateDetailTargets(generationTargets, true));
             } else if (operation.action === "remove-screen") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
                 commitDetailMutation(removeDetailWorkflowScreen(nodesRef.current, connectionsRef.current, workflowId, Number(operation.screenIndex || 0)));
@@ -3005,6 +3026,7 @@ function InfiniteCanvasPage() {
             } else if (operation.action === "regenerate-all") {
                 commitNodes((items) => markDetailCompositionStale(items, workflowId));
                 if (operation.styleSummary) commitNodes((items) => updateDetailWorkflowStyle(items, workflowId, operation.styleSummary!));
+                markDetailTargetsForRegeneration(configs);
                 emitDetailEvent("detail.workflow.regenerating", `按用户明确要求重新生成全部 ${configs.length} 屏`, { status: "running" });
                 if (generationMode === "rough") {
                     const firstOk = await generateConfig(configs[0], true);
@@ -3029,7 +3051,7 @@ function InfiniteCanvasPage() {
                 executionFailed = !(await generateConfig(target, true));
             } else if (generationMode === "rough") {
                 if (executionMode === "step") {
-                    const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR && !output.metadata.content);
+                    const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR);
                     if (failed) {
                         return {
                             ok: false,
@@ -3039,12 +3061,13 @@ function InfiniteCanvasPage() {
                             nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [failed.id], viewport: viewportRef.current },
                         };
                     }
-                    const pending = configs.filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
+                    const pending = configs.filter((config) => config.metadata?.detailNeedsRegeneration === true || !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
                     const target = pending[0];
                     if (target) executionFailed = !(await generateConfig(target));
                 } else {
                     const firstDone = detailResultForConfig(nodesRef.current, connectionsRef.current, configs[0].id);
-                    if (firstDone?.metadata?.status === NODE_STATUS_ERROR && !firstDone.metadata.content) {
+                    const firstNeedsRegeneration = configs[0].metadata?.detailNeedsRegeneration === true || firstDone?.metadata?.detailNeedsRegeneration === true;
+                    if (firstDone?.metadata?.status === NODE_STATUS_ERROR) {
                         return {
                             ok: false,
                             message: "首屏生成失败，请先重试首屏失败节点",
@@ -3053,17 +3076,17 @@ function InfiniteCanvasPage() {
                             nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [firstDone.id], viewport: viewportRef.current },
                         };
                     }
-                    if (!firstDone?.metadata?.content) {
+                    if (firstNeedsRegeneration || !firstDone?.metadata?.content) {
                         const ok = await generateConfig(configs[0]);
                         if (!ok) return { ok: false, message: "首屏生成失败，粗略模式已停止", generationRunIds, imageJobIds };
                     }
                     configs = detailWorkflowConfigs(nodesRef.current, workflowId);
-                    const remaining = configs.slice(1).filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
+                    const remaining = configs.slice(1).filter((config) => config.metadata?.detailNeedsRegeneration === true || !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
                     const results = await Promise.all(remaining.map((config) => generateConfig(config)));
                     executionFailed = results.some((ok) => !ok) || configs.some((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)?.metadata?.status === NODE_STATUS_ERROR);
                 }
             } else {
-                const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR && !output.metadata.content);
+                const failed = configs.map((config) => detailResultForConfig(nodesRef.current, connectionsRef.current, config.id)).find((output) => output?.metadata?.status === NODE_STATUS_ERROR);
                 if (failed) {
                     return {
                         ok: false,
@@ -3073,7 +3096,7 @@ function InfiniteCanvasPage() {
                         nextCanvas: { nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [failed.id], viewport: viewportRef.current },
                     };
                 }
-                const pending = configs.filter((config) => !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
+                const pending = configs.filter((config) => config.metadata?.detailNeedsRegeneration === true || !detailResultForConfig(nodesRef.current, connectionsRef.current, config.id));
                 const targets = executionMode === "step" ? pending.slice(0, 1) : pending;
                 for (const config of targets) {
                     const ok = await generateConfig(config);
@@ -3094,13 +3117,17 @@ function InfiniteCanvasPage() {
                         ? `仅新增并生成了第 ${operation.afterScreenIndex === undefined ? configs.length : Math.min(configs.length, operation.afterScreenIndex + 1)} 屏，原有屏幕未重新生成；合成长图已更新`
                         : operation.action === "add-screens"
                           ? `仅新增并生成了 ${operation.screenDrafts?.length || 0} 屏，原有屏幕未重新生成；合成长图只更新了一次`
-                          : operation.action === "update-screen"
+                          : operation.action === "update-screen" && editScope === "current"
                             ? `仅重新生成了第 ${operation.screenIndex || 0} 屏，其他屏幕未重新生成；合成长图已更新`
-                            : operation.action === "update-screens"
-                              ? `仅重新生成了指定的 ${operation.screenUpdates?.length || 0} 屏，其他屏幕未重新生成；合成长图只更新了一次`
-                              : operation.action === "regenerate-all"
-                                ? `已按要求重新生成全部 ${configs.length} 屏，并更新合成长图`
-                                : composed.message;
+                            : operation.action === "update-screen" && editScope === "downstream"
+                              ? `已修改第 ${operation.screenIndex || 0} 屏，并重新生成本屏及后续关联屏；合成长图已更新`
+                              : operation.action === "update-screen" && editScope === "all"
+                                ? `已修改第 ${operation.screenIndex || 0} 屏，并重新生成全部 ${configs.length} 屏；合成长图已更新`
+                                : operation.action === "update-screens"
+                                  ? `已修改指定的 ${operation.screenUpdates?.length || 0} 屏，生成范围：${editScopeLabel}；合成长图只更新了一次`
+                                  : operation.action === "regenerate-all"
+                                    ? `已按要求重新生成全部 ${configs.length} 屏，并更新合成长图`
+                                    : composed.message;
                 return { ...composed, message, generationRunIds, imageJobIds };
             }
             return {

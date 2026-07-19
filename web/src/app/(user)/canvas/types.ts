@@ -65,6 +65,9 @@ export type CanvasNodeMetadata = {
     detailPromptNodeId?: string;
     detailAttempt?: number;
     detailCompositionStale?: boolean;
+    detailNeedsRegeneration?: boolean;
+    referenceOrder?: number;
+    referenceLabel?: string;
 };
 
 export type CanvasNodeData = {
@@ -96,6 +99,7 @@ export type CanvasAssistantReference = {
 export type CanvasDetailAgentOptions = {
     generationMode: "precise" | "rough";
     executionMode: "step" | "continuous";
+    editScope: "current" | "downstream" | "all";
     composeWhenComplete: boolean;
 };
 

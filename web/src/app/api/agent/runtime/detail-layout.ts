@@ -2,6 +2,7 @@ import { findOpenNodePosition } from "@/app/(user)/canvas/utils/canvas-layout";
 
 import type { CanvasOperationPayload } from "./canvas-layout";
 import type { AgentCanvasSnapshot } from "./types";
+import { attachmentCanvasTitle, selectAttachmentsInUploadOrder } from "./reference-order";
 
 const TASK_GAP = 120;
 const STAGE_GAP = 80;
@@ -34,7 +35,7 @@ export function buildDetailWorkflowOperations(snapshot: AgentCanvasSnapshot, arg
     const existingImageIds = new Set(snapshot.nodes.filter((node) => node.type === "image").map((node) => node.id));
     const requestedNodeIds = stringArray(args.reference_node_ids).filter((id, index, values) => existingImageIds.has(id) && values.indexOf(id) === index);
     const requestedAttachmentIds = stringArray(args.reference_attachment_ids);
-    const attachments = (snapshot.attachments || []).filter((item) => item.id && item.url && (!requestedAttachmentIds.length || requestedAttachmentIds.includes(String(item.id)))).slice(0, Math.max(0, referenceLimit - requestedNodeIds.length));
+    const attachments = selectAttachmentsInUploadOrder(snapshot.attachments, requestedAttachmentIds, referenceLimit - requestedNodeIds.length);
     const blockHeight = Math.max(PLAN_SIZE.height, screens.length * CONFIG_SIZE.height + Math.max(0, screens.length - 1) * ROW_GAP);
     const blockWidth = REFERENCE_SIZE + STAGE_GAP + PLAN_SIZE.width + STAGE_GAP + PROMPT_SIZE.width + STAGE_GAP + CONFIG_SIZE.width + STAGE_GAP + RESULT_SIZE.width;
     const preferred = nextDetailOrigin(snapshot);
@@ -54,7 +55,7 @@ export function buildDetailWorkflowOperations(snapshot: AgentCanvasSnapshot, arg
             node: {
                 id: attachmentIds[index],
                 type: "image",
-                title: String(attachment.title || `参考图 ${index + 1}`).slice(0, 64),
+                title: attachmentCanvasTitle(attachment, index),
                 position: { x: refX, y: origin.y + index * (REFERENCE_SIZE + REFERENCE_GAP) },
                 width: REFERENCE_SIZE,
                 height: REFERENCE_SIZE,
@@ -64,6 +65,8 @@ export function buildDetailWorkflowOperations(snapshot: AgentCanvasSnapshot, arg
                     status: "success",
                     detailWorkflowId: workflowId,
                     detailRole: "reference",
+                    referenceOrder: Number(attachment.order) || index + 1,
+                    referenceLabel: attachment.label || `图${index + 1}`,
                 },
             },
         });
@@ -223,6 +226,7 @@ export function buildDetailWorkflowAction(name: string, args: Record<string, unk
         screenDrafts: normalizeScreenDrafts(args.screens),
         screenUpdates: normalizeScreenUpdates(args.updates),
         screenIndices: numberArray(args.screen_indices, 11),
+        editScope: args.edit_scope === "downstream" ? "downstream" : args.edit_scope === "all" ? "all" : "current",
         generationMode: args.generation_mode === "rough" ? "rough" : undefined,
         executionMode: args.execution_mode === "continuous" ? "continuous" : args.execution_mode === "step" ? "step" : undefined,
         composeWhenComplete: args.compose_when_complete !== false,

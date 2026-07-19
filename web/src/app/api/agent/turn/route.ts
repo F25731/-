@@ -97,6 +97,7 @@ function sanitizeDetailOptions(value: AgentRunPayload["detailOptions"]) {
     return {
         generationMode: value?.generationMode === "rough" ? ("rough" as const) : ("precise" as const),
         executionMode: value?.executionMode === "step" ? ("step" as const) : ("continuous" as const),
+        editScope: value?.editScope === "downstream" ? ("downstream" as const) : value?.editScope === "all" ? ("all" as const) : ("current" as const),
         composeWhenComplete: value?.composeWhenComplete !== false,
     };
 }
@@ -126,7 +127,7 @@ function sanitizeSnapshot(value: AgentRunPayload["snapshot"]): AgentCanvasSnapsh
         nodes: value.nodes.slice(0, 500),
         connections: value.connections.slice(0, 1000),
         selectedNodeIds: value.selectedNodeIds.slice(0, 200),
-        attachments: Array.isArray(value.attachments) ? value.attachments.slice(0, 6) : [],
+        attachments: Array.isArray(value.attachments) ? value.attachments.slice(0, 6).map((attachment, index) => ({ ...attachment, order: index + 1, label: `图${index + 1}` })) : [],
         imageModels: Array.isArray(value.imageModels) ? value.imageModels.slice(0, 100) : [],
     };
 }

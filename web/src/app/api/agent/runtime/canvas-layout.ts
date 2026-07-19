@@ -1,6 +1,7 @@
 import { findOpenNodePosition } from "@/app/(user)/canvas/utils/canvas-layout";
 
 import type { AgentCanvasSnapshot, AgentNodeSnapshot } from "./types";
+import { attachmentCanvasTitle, selectAttachmentsInUploadOrder } from "./reference-order";
 
 const TASK_GAP = 120;
 const STAGE_GAP = 80;
@@ -94,7 +95,7 @@ function buildTaskPlan(snapshot: AgentCanvasSnapshot, task: ImageGenerationTask,
     const referenceLimit = Math.max(0, Number(modelConfig?.referenceLimit) || 0);
     const existingImageIds = new Set(snapshot.nodes.filter((node) => node.type === "image").map((node) => node.id));
     const existingReferences = task.referenceNodeIds.filter((id, index, values) => existingImageIds.has(id) && values.indexOf(id) === index).slice(0, referenceLimit);
-    const attachments = (snapshot.attachments || []).filter((item) => item.id && item.url && (!task.referenceAttachmentIds.length || task.referenceAttachmentIds.includes(String(item.id)))).slice(0, Math.max(0, referenceLimit - existingReferences.length));
+    const attachments = selectAttachmentsInUploadOrder(snapshot.attachments, task.referenceAttachmentIds, referenceLimit - existingReferences.length);
     const hasAttachmentColumn = attachments.length > 0;
     const promptX = x + (hasAttachmentColumn ? REFERENCE_SIZE + STAGE_GAP : 0);
     const configX = promptX + PROMPT_SIZE.width + STAGE_GAP;
@@ -114,11 +115,11 @@ function buildTaskPlan(snapshot: AgentCanvasSnapshot, task: ImageGenerationTask,
             node: {
                 id,
                 type: "image",
-                title: String(attachment.title || `参考图 ${index + 1}`).slice(0, 64),
+                title: attachmentCanvasTitle(attachment, index),
                 position: { x, y: y + index * (REFERENCE_SIZE + REFERENCE_GAP) },
                 width: REFERENCE_SIZE,
                 height: REFERENCE_SIZE,
-                metadata: { content: String(attachment.url), remoteUrl: String(attachment.url), status: "success", prompt: "Agent 参考图" },
+                metadata: { content: String(attachment.url), remoteUrl: String(attachment.url), status: "success", prompt: "Agent 参考图", referenceOrder: Number(attachment.order) || index + 1, referenceLabel: attachment.label || `图${index + 1}` },
             },
         });
         createdNodeIds.push(id);

@@ -182,7 +182,7 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
         required: ["screens"],
         additionalProperties: false,
     }),
-    tool("canvas_update_detail_screen", "Modify and regenerate exactly one existing detail screen in place. Preserve every other screen and refresh the composed long image after success.", {
+    tool("canvas_update_detail_screen", "Modify one existing detail screen in place, then regenerate the customer-selected scope: current screen, downstream screens, or all screens. Refresh the composed long image after success.", {
         type: "object",
         properties: {
             workflow_id: { type: "string" },
@@ -190,12 +190,13 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
             title: { type: "string" },
             goal: { type: "string" },
             prompt: { type: "string" },
+            edit_scope: { type: "string", enum: ["current", "downstream", "all"] },
             compose_when_complete: { type: "boolean" },
         },
         required: ["screen_index", "title", "goal", "prompt"],
         additionalProperties: false,
     }),
-    tool("canvas_update_detail_screens", "Modify and regenerate multiple specified detail screens in one batch. Preserve all unmentioned screens and compose the long image once after the batch completes.", {
+    tool("canvas_update_detail_screens", "Modify multiple specified detail screens in one batch, then regenerate the customer-selected scope from the earliest changed screen. Compose the long image once after the batch completes.", {
         type: "object",
         properties: {
             workflow_id: { type: "string" },
@@ -215,6 +216,7 @@ export const CANVAS_DETAIL_AGENT_TOOLS = [
                     additionalProperties: false,
                 },
             },
+            edit_scope: { type: "string", enum: ["current", "downstream", "all"] },
             compose_when_complete: { type: "boolean" },
         },
         required: ["updates"],
@@ -390,11 +392,12 @@ function enforceDetailToolIntent(name: string, snapshot: AgentCanvasSnapshot, us
 
 function detailToolDescription(name: string, args: Record<string, unknown>) {
     const index = Number(args.screen_index) || 1;
+    const editScope = args.edit_scope === "downstream" ? "本屏及后续" : args.edit_scope === "all" ? "全部屏幕" : "仅本屏";
     if (name === "canvas_compose_detail_long_image") return "在浏览器合成详情页长图";
     if (name === "canvas_add_detail_screen") return `仅新增一屏详情图：${String(args.title || "新屏幕").slice(0, 48)}`;
     if (name === "canvas_add_detail_screens") return `仅批量新增 ${Array.isArray(args.screens) ? args.screens.length : 0} 屏详情图`;
-    if (name === "canvas_update_detail_screen") return `仅修改并重新生成详情图第 ${index} 屏`;
-    if (name === "canvas_update_detail_screens") return `仅批量修改并重新生成 ${Array.isArray(args.updates) ? args.updates.length : 0} 屏详情图`;
+    if (name === "canvas_update_detail_screen") return `修改详情图第 ${index} 屏，生成范围：${editScope}`;
+    if (name === "canvas_update_detail_screens") return `批量修改 ${Array.isArray(args.updates) ? args.updates.length : 0} 屏详情图，生成范围：${editScope}`;
     if (name === "canvas_remove_detail_screen") return `仅删除详情图第 ${index} 屏`;
     if (name === "canvas_remove_detail_screens") return `仅批量删除 ${Array.isArray(args.screen_indices) ? args.screen_indices.length : 0} 屏详情图`;
     if (name === "canvas_move_detail_screen") return `仅调整详情图第 ${index} 屏顺序`;
@@ -409,6 +412,7 @@ function applyDetailOptions(name: string, args: Record<string, unknown>, detailO
         ...args,
         generation_mode: detailOptions.generationMode,
         execution_mode: detailOptions.executionMode,
+        edit_scope: detailOptions.editScope,
         compose_when_complete: detailOptions.composeWhenComplete,
     };
 }

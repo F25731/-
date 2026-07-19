@@ -37,6 +37,8 @@ export type CanvasAgentSnapshot = {
         id: string;
         title: string;
         url: string;
+        order: number;
+        label: string;
     }>;
     imageModels: Array<{
         name: string;
@@ -120,7 +122,7 @@ export function buildCanvasAgentSnapshot(input: {
         viewport: input.viewport,
         selectedNodeIds: Array.from(input.selectedNodeIds),
         attachments: (input.attachments || [])
-            .map((item) => ({ id: item.id, title: item.title, url: String(item.remoteUrl || "").trim() }))
+            .map((item, index) => ({ id: item.id, title: item.title, url: String(item.remoteUrl || "").trim(), order: index + 1, label: `图${index + 1}` }))
             .filter((item) => /^https?:\/\//i.test(item.url))
             .slice(0, 6),
         nodes: input.nodes.slice(0, 200).map((node) => ({

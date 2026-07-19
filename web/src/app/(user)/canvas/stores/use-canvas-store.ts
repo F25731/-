@@ -310,6 +310,7 @@ function normalizeDetailOptions(value: CanvasAssistantSession["messages"][number
     return {
         generationMode: value.generationMode === "rough" ? ("rough" as const) : ("precise" as const),
         executionMode: value.executionMode === "step" ? ("step" as const) : ("continuous" as const),
+        editScope: value.editScope === "downstream" ? ("downstream" as const) : value.editScope === "all" ? ("all" as const) : ("current" as const),
         composeWhenComplete: value.composeWhenComplete !== false,
     };
 }

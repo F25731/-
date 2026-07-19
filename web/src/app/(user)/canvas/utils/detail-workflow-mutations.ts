@@ -18,6 +18,17 @@ type MutationResult = {
     configIds?: string[];
 };
 
+export function selectDetailEditTargets(configs: CanvasNodeData[], changedScreenIndices: number[], scope: "current" | "downstream" | "all") {
+    const changed = new Set(changedScreenIndices.map((index) => Math.floor(index)).filter((index) => index > 0));
+    if (!changed.size) return [];
+    if (scope === "all") return configs;
+    if (scope === "downstream") {
+        const firstChanged = Math.min(...changed);
+        return configs.filter((config) => Number(config.metadata?.detailScreenIndex || 0) >= firstChanged);
+    }
+    return configs.filter((config) => changed.has(Number(config.metadata?.detailScreenIndex || 0)));
+}
+
 export function markDetailCompositionStale(nodes: CanvasNodeData[], workflowId: string) {
     return nodes.map((node) => (node.metadata?.detailWorkflowId === workflowId && node.metadata.detailRole === "long-image" ? { ...node, title: "详情页合成长图（待更新）", metadata: { ...node.metadata, detailCompositionStale: true } } : node));
 }

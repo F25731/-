@@ -34,6 +34,7 @@ const AGENT_FULL_ACCESS_STORAGE_KEY = "canvas-agent:full-access-v1";
 const AGENT_MODE_STORAGE_KEY = "canvas-agent:mode-v1";
 const DETAIL_GENERATION_MODE_STORAGE_KEY = "canvas-agent:detail-generation-mode-v1";
 const DETAIL_EXECUTION_MODE_STORAGE_KEY = "canvas-agent:detail-execution-mode-v1";
+const DETAIL_EDIT_SCOPE_STORAGE_KEY = "canvas-agent:detail-edit-scope-v1";
 const DETAIL_COMPOSE_STORAGE_KEY = "canvas-agent:detail-compose-v1";
 const MAX_AGENT_ATTACHMENTS = 6;
 
@@ -131,6 +132,10 @@ function CanvasAssistantPanelContent({
     const [agentMode, setAgentMode] = useState<"general" | "detail">(() => (typeof window !== "undefined" && window.localStorage.getItem(AGENT_MODE_STORAGE_KEY) === "detail" ? "detail" : "general"));
     const [detailGenerationMode, setDetailGenerationMode] = useState<CanvasDetailAgentOptions["generationMode"]>(() => (typeof window !== "undefined" && window.localStorage.getItem(DETAIL_GENERATION_MODE_STORAGE_KEY) === "rough" ? "rough" : "precise"));
     const [detailExecutionMode, setDetailExecutionMode] = useState<CanvasDetailAgentOptions["executionMode"]>(() => (typeof window !== "undefined" && window.localStorage.getItem(DETAIL_EXECUTION_MODE_STORAGE_KEY) === "step" ? "step" : "continuous"));
+    const [detailEditScope, setDetailEditScope] = useState<CanvasDetailAgentOptions["editScope"]>(() => {
+        const stored = typeof window === "undefined" ? "" : window.localStorage.getItem(DETAIL_EDIT_SCOPE_STORAGE_KEY);
+        return stored === "downstream" || stored === "all" ? stored : "current";
+    });
     const [detailComposeWhenComplete, setDetailComposeWhenComplete] = useState(() => typeof window === "undefined" || window.localStorage.getItem(DETAIL_COMPOSE_STORAGE_KEY) !== "false");
     const [fullAccess, setFullAccess] = useState(() => (typeof window === "undefined" ? true : window.localStorage.getItem(AGENT_FULL_ACCESS_STORAGE_KEY) !== "false"));
     const [localSessions, setLocalSessions] = useState<CanvasAssistantSession[]>(() => (sessions.length ? sessions : [createSession()]));
@@ -168,8 +173,8 @@ function CanvasAssistantPanelContent({
     const hasUploadingReference = uploadedReferences.some((item) => item.uploadStatus === "uploading");
     const iconButtonStyle = { color: theme.node.muted };
     const detailOptions = useMemo<CanvasDetailAgentOptions>(
-        () => ({ generationMode: detailGenerationMode, executionMode: detailExecutionMode, composeWhenComplete: detailComposeWhenComplete }),
-        [detailComposeWhenComplete, detailExecutionMode, detailGenerationMode],
+        () => ({ generationMode: detailGenerationMode, executionMode: detailExecutionMode, editScope: detailEditScope, composeWhenComplete: detailComposeWhenComplete }),
+        [detailComposeWhenComplete, detailEditScope, detailExecutionMode, detailGenerationMode],
     );
 
     useEffect(() => {
@@ -693,9 +698,11 @@ function CanvasAssistantPanelContent({
                         onDetailOptionsChange={(next) => {
                             setDetailGenerationMode(next.generationMode);
                             setDetailExecutionMode(next.executionMode);
+                            setDetailEditScope(next.editScope);
                             setDetailComposeWhenComplete(next.composeWhenComplete);
                             window.localStorage.setItem(DETAIL_GENERATION_MODE_STORAGE_KEY, next.generationMode);
                             window.localStorage.setItem(DETAIL_EXECUTION_MODE_STORAGE_KEY, next.executionMode);
+                            window.localStorage.setItem(DETAIL_EDIT_SCOPE_STORAGE_KEY, next.editScope);
                             window.localStorage.setItem(DETAIL_COMPOSE_STORAGE_KEY, String(next.composeWhenComplete));
                         }}
                         onAddFiles={addReferenceFiles}
@@ -772,6 +779,7 @@ function AssistantComposer({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canSubmit = !isRunning && !hasUploadingReference && Boolean(prompt.trim() || references.some((item) => item.uploadStatus === "ready"));
+    const uploadedOrderById = new Map(references.filter((item) => item.id.startsWith("agent-upload-") && item.uploadStatus !== "error").map((item, index) => [item.id, index + 1]));
 
     return (
         <div className="px-2 pb-2 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
@@ -779,7 +787,7 @@ function AssistantComposer({
                 {references.length ? (
                     <div className="thin-scrollbar mb-2 flex max-w-full gap-2 overflow-x-auto pb-1">
                         {references.map((item) => (
-                            <AssistantReferenceChip key={item.id} item={item} onRemove={() => onRemoveReference(item.id)} />
+                            <AssistantReferenceChip key={item.id} item={item} order={uploadedOrderById.get(item.id)} onRemove={() => onRemoveReference(item.id)} />
                         ))}
                     </div>
                 ) : null}
@@ -825,6 +833,23 @@ function AssistantComposer({
                             ]}
                             onChange={(value) => onDetailOptionsChange({ ...detailOptions, executionMode: value as CanvasDetailAgentOptions["executionMode"] })}
                         />
+                        <div className="col-span-2 grid grid-cols-[auto_1fr] items-center gap-2">
+                            <span className="text-xs" style={{ color: theme.node.muted }}>
+                                修改范围
+                            </span>
+                            <Segmented
+                                block
+                                size="small"
+                                value={detailOptions.editScope}
+                                disabled={isRunning}
+                                options={[
+                                    { label: "仅本屏", value: "current" },
+                                    { label: "本屏及后续", value: "downstream" },
+                                    { label: "全部", value: "all" },
+                                ]}
+                                onChange={(value) => onDetailOptionsChange({ ...detailOptions, editScope: value as CanvasDetailAgentOptions["editScope"] })}
+                            />
+                        </div>
                         <label className="col-span-2 flex h-7 items-center justify-between px-1 text-xs" style={{ color: theme.node.muted }}>
                             完成后合成长图
                             <Switch size="small" checked={detailOptions.composeWhenComplete} disabled={isRunning} onChange={(checked) => onDetailOptionsChange({ ...detailOptions, composeWhenComplete: checked })} />
@@ -1214,7 +1239,7 @@ function friendlyAgentLog(log: string) {
     return value;
 }
 
-function AssistantReferenceChip({ item, onRemove }: { item: AgentComposerReference; onRemove?: () => void }) {
+function AssistantReferenceChip({ item, order, onRemove }: { item: AgentComposerReference; order?: number; onRemove?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "?";
     return (
@@ -1240,6 +1265,7 @@ function AssistantReferenceChip({ item, onRemove }: { item: AgentComposerReferen
                     <CircleAlert className="size-5" />
                 </span>
             ) : null}
+            {order ? <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] leading-none text-white">图{order}</span> : null}
             {onRemove ? (
                 <button
                     type="button"

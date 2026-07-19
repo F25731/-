@@ -28,7 +28,7 @@ export type AgentCanvasSnapshot = {
     nodes: AgentNodeSnapshot[];
     connections: Array<{ id: string; fromNodeId: string; toNodeId: string }>;
     selectedNodeIds: string[];
-    attachments?: Array<{ id?: string; title?: string; url?: string }>;
+    attachments?: Array<{ id?: string; title?: string; url?: string; order?: number; label?: string }>;
     imageModels?: Array<{
         name?: string;
         supportedSizes?: string[];
@@ -63,6 +63,7 @@ export type AgentRunPayload = {
 export type AgentDetailOptions = {
     generationMode: "precise" | "rough";
     executionMode: "step" | "continuous";
+    editScope: "current" | "downstream" | "all";
     composeWhenComplete: boolean;
 };
 
